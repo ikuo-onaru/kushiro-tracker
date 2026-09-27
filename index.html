@@ -372,7 +372,7 @@
     state.work.forEach(function(w){
       csv += d + ",作業," + w.segment + "," + w.start + "," + (w.end||"") + "\n";
     });
-    saveFile("kushiro_log_" + d + ".csv", csv, "text/csv");
+    saveFile("kushiro_log_" + d + ".csv", "\ufeff" + csv, "text/csv");
   });
 
   document.getElementById("btn-export-kml").addEventListener("click", function(){
@@ -494,21 +494,21 @@
   }
 
   document.getElementById("btn-drive-csv").addEventListener("click", function(){
-    let csv = "date,type,segment,start,end\\n";
+    let csv = "date,type,segment,start,end\n";
     const d = todayKey();
     state.attendance.forEach(function(a){
-      csv += d + ",勤怠,,"+ a.in + "," + (a.out||"") + "\\n";
+      csv += d + ",勤怠,,"+ a.in + "," + (a.out||"") + "\n";
     });
     state.work.forEach(function(w){
-      csv += d + ",作業," + w.segment + "," + w.start + "," + (w.end||"") + "\\n";
+      csv += d + ",作業," + w.segment + "," + w.start + "," + (w.end||"") + "\n";
     });
-    driveUpload("kushiro_log_" + d + ".csv", csv, "text/csv");
+    driveUpload("kushiro_log_" + d + ".csv", "\ufeff" + csv, "text/csv");
   });
 
   document.getElementById("btn-drive-kml").addEventListener("click", function(){
     const d = todayKey();
     const coordsStr = state.gps.map(function(p){ return p.lon + "," + p.lat + ",0"; }).join(" ");
-    const kml = '<?xml version="1.0" encoding="UTF-8"?>\\n' +
+    const kml = '<?xml version="1.0" encoding="UTF-8"?>\n' +
       '<kml xmlns="http://www.opengis.net/kml/2.2"><Document>' +
       '<name>釧路現場 軌跡 ' + d + '</name>' +
       '<Placemark><name>GPS軌跡 ' + d + '</name>' +
