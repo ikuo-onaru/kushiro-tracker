@@ -199,21 +199,23 @@
   const attStatus = document.getElementById("attendance-status");
   const attLog = document.getElementById("attendance-log");
 
+  // state.attendance is a flat list of independent events: { kind: "出勤"|"退勤", time: "HH:MM:SS" }
   function renderAttendance(){
-    const clockedIn = state.attendance.length && !state.attendance[state.attendance.length-1].out;
+    const last = state.attendance[state.attendance.length-1];
+    const clockedIn = last && last.kind === "出勤";
     btnClockIn.disabled = !!clockedIn;
     btnClockOut.disabled = !clockedIn;
     attStatus.textContent = clockedIn
-      ? "出勤中（" + state.attendance[state.attendance.length-1].in + " 出勤）"
+      ? "出勤中（" + last.time + " 出勤）"
       : (state.attendance.length ? "退勤済み" : "まだ出勤していません");
 
     if (!state.attendance.length){
       attLog.className = "empty"; attLog.textContent = "記録なし"; return;
     }
     attLog.className = "";
-    let html = "<table><tr><th>出勤</th><th>退勤</th><th></th></tr>";
+    let html = "<table><tr><th>種別</th><th>時刻</th><th></th></tr>";
     state.attendance.forEach(function(r, idx){
-      html += "<tr><td>" + r.in + "</td><td>" + (r.out || "-") + "</td>"
+      html += "<tr><td>" + r.kind + "</td><td>" + r.time + "</td>"
             + "<td><button class=\"del-btn\" data-kind=\"att\" data-idx=\"" + idx + "\">削除</button></td></tr>";
     });
     html += "</table>";
@@ -221,12 +223,11 @@
   }
 
   btnClockIn.addEventListener("click", function(){
-    state.attendance.push({ in: timeStr(new Date()), out: null });
+    state.attendance.push({ kind: "出勤", time: timeStr(new Date()) });
     saveDay(state); renderAttendance();
   });
   btnClockOut.addEventListener("click", function(){
-    const last = state.attendance[state.attendance.length-1];
-    if (last && !last.out) last.out = timeStr(new Date());
+    state.attendance.push({ kind: "退勤", time: timeStr(new Date()) });
     saveDay(state); renderAttendance();
   });
   attLog.addEventListener("click", function(e){
@@ -253,18 +254,20 @@
   const workLogEl = document.getElementById("work-log");
   let workTimerInterval = null;
 
+  // state.work is a flat list of independent events: { segment, kind: "開始"|"終了", time }
   function renderWork(){
-    const active = state.work.find(w => !w.end);
+    const last = state.work[state.work.length-1];
+    const active = last && last.kind === "開始" ? last : null;
     if (active){
       segSelect.value = active.segment;
       segSelect.disabled = true;
       btnWorkStart.disabled = true;
       btnWorkStop.disabled = false;
-      workStatus.textContent = active.segment + " を作業中（開始 " + active.start + "）";
+      workStatus.textContent = active.segment + " を作業中（開始 " + active.time + "）";
       workTimerEl.style.display = "";
       if (!workTimerInterval){
         const startDate = new Date();
-        const [h,m,s] = active.start.split(":").map(Number);
+        const [h,m,s] = active.time.split(":").map(Number);
         startDate.setHours(h,m,s,0);
         workTimerInterval = setInterval(function(){
           const diff = Math.max(0, Math.floor((new Date() - startDate)/1000));
@@ -287,11 +290,11 @@
       workLogEl.className = "empty"; workLogEl.textContent = "記録なし"; return;
     }
     workLogEl.className = "";
-    let html = "<table><tr><th>区間</th><th>開始</th><th>終了</th><th></th></tr>";
+    let html = "<table><tr><th>区間</th><th>種別</th><th>時刻</th><th></th></tr>";
     const total = state.work.length;
     state.work.slice().reverse().forEach(function(w, revIdx){
       const origIdx = total - 1 - revIdx;
-      html += "<tr><td>" + w.segment + "</td><td>" + w.start + "</td><td>" + (w.end || "作業中") + "</td>"
+      html += "<tr><td>" + w.segment + "</td><td>" + w.kind + "</td><td>" + w.time + "</td>"
             + "<td><button class=\"del-btn\" data-kind=\"work\" data-idx=\"" + origIdx + "\">削除</button></td></tr>";
     });
     html += "</table>";
@@ -307,12 +310,13 @@
   });
 
   btnWorkStart.addEventListener("click", function(){
-    state.work.push({ segment: segSelect.value, start: timeStr(new Date()), end: null });
+    state.work.push({ segment: segSelect.value, kind: "開始", time: timeStr(new Date()) });
     saveDay(state); renderWork();
   });
   btnWorkStop.addEventListener("click", function(){
-    const active = state.work.find(w => !w.end);
-    if (active) active.end = timeStr(new Date());
+    const last = state.work[state.work.length-1];
+    const segment = (last && last.kind === "開始") ? last.segment : segSelect.value;
+    state.work.push({ segment: segment, kind: "終了", time: timeStr(new Date()) });
     saveDay(state); renderWork();
   });
 
@@ -387,15 +391,15 @@
   function buildCsv(){
     const d = todayKey();
     let csv = "【勤怠】\n";
-    csv += "date,出勤,退勤\n";
+    csv += "date,種別,時刻\n";
     state.attendance.forEach(function(a){
-      csv += d + "," + a.in + "," + (a.out||"（未退勤）") + "\n";
+      csv += d + "," + a.kind + "," + a.time + "\n";
     });
     csv += "\n";
     csv += "【作業ログ】\n";
-    csv += "date,区間,開始,終了\n";
+    csv += "date,区間,種別,時刻\n";
     state.work.forEach(function(w){
-      csv += d + "," + w.segment + "," + w.start + "," + (w.end||"（作業中）") + "\n";
+      csv += d + "," + w.segment + "," + w.kind + "," + w.time + "\n";
     });
     return { d: d, csv: csv };
   }
