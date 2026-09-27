@@ -56,7 +56,12 @@
   .footer-note { font-size:11px; color:var(--sub); text-align:center; margin-top:10px; }
   .gpsdot { display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--danger); margin-right:6px; }
   .gpsdot.on { background:#2b9348; }
+
+  .drivebtn { background:#1a73e8; }
+  .drivebtn:disabled { opacity:0.5; }
+  .drive-status { font-size:12px; color:var(--sub); margin-top:6px; min-height:16px; }
 </style>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
 <header><h1>釧路現場　工程・勤怠管理</h1></header>
@@ -129,6 +134,17 @@
       <div class="row">
         <button class="ghost" id="btn-clear">本日のデータを消去</button>
       </div>
+    </div>
+    <div class="card">
+      <h2>Googleドライブに保存</h2>
+      <div class="row">
+        <button class="drivebtn" id="btn-drive-csv">作業ログをドライブに保存</button>
+      </div>
+      <div class="row">
+        <button class="drivebtn" id="btn-drive-kml">GPS軌跡をドライブに保存</button>
+      </div>
+      <div class="drive-status" id="drive-status"></div>
+      <div class="footer-note">初回はGoogleアカウントへのログインとアクセス許可が必要です。保存先はGoogleドライブ内に自動作成される「kushiro-tracker」フォルダです。</div>
       <div class="footer-note">データはこの端末（ブラウザ）内にのみ保存されます。日付が変わると自動的に新しい記録になります。</div>
     </div>
   </section>
@@ -377,6 +393,129 @@
     state = { attendance: [], work: [], gps: [] };
     saveDay(state);
     renderAttendance(); renderWork(); renderGps();
+  });
+
+  // ---------- Googleドライブ連携 ----------
+  const DRIVE_CLIENT_ID = "6787185038-skuu8gj9kvn316feseqgrgsdi0iaa2fd.apps.googleusercontent.com";
+  const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file";
+  const driveStatusEl = document.getElementById("drive-status");
+  let accessToken = null;
+  let tokenClient = null;
+  let pendingUpload = null;
+  let cachedFolderId = null;
+
+  function setDriveStatus(msg){ if (driveStatusEl) driveStatusEl.textContent = msg; }
+
+  function initTokenClientIfNeeded(){
+    if (tokenClient || !window.google || !google.accounts || !google.accounts.oauth2) return;
+    tokenClient = google.accounts.oauth2.initTokenClient({
+      client_id: DRIVE_CLIENT_ID,
+      scope: DRIVE_SCOPE,
+      callback: async function(resp){
+        if (resp.error){
+          setDriveStatus("ログイン/許可が必要です: " + resp.error);
+          return;
+        }
+        accessToken = resp.access_token;
+        if (pendingUpload){
+          const job = pendingUpload; pendingUpload = null;
+          await doUpload(job.filename, job.content, job.mime);
+        }
+      }
+    });
+  }
+
+  async function getOrCreateFolder(){
+    if (cachedFolderId) return cachedFolderId;
+    const q = encodeURIComponent("name='kushiro-tracker' and mimeType='application/vnd.google-apps.folder' and trashed=false");
+    const listRes = await fetch("https://www.googleapis.com/drive/v3/files?q=" + q + "&fields=files(id,name)", {
+      headers: { Authorization: "Bearer " + accessToken }
+    });
+    const listData = await listRes.json();
+    if (listData.files && listData.files.length){
+      cachedFolderId = listData.files[0].id;
+      return cachedFolderId;
+    }
+    const createRes = await fetch("https://www.googleapis.com/drive/v3/files", {
+      method: "POST",
+      headers: { Authorization: "Bearer " + accessToken, "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "kushiro-tracker", mimeType: "application/vnd.google-apps.folder" })
+    });
+    const createData = await createRes.json();
+    cachedFolderId = createData.id;
+    return cachedFolderId;
+  }
+
+  async function doUpload(filename, content, mime){
+    setDriveStatus("アップロード中...");
+    try {
+      const folderId = await getOrCreateFolder();
+      const metadata = { name: filename, parents: [folderId] };
+      const boundary = "-------kushiro" + Date.now();
+      const body =
+        "--" + boundary + "\r\n" +
+        "Content-Type: application/json; charset=UTF-8\r\n\r\n" +
+        JSON.stringify(metadata) + "\r\n" +
+        "--" + boundary + "\r\n" +
+        "Content-Type: " + mime + "\r\n\r\n" +
+        content + "\r\n" +
+        "--" + boundary + "--";
+
+      const res = await fetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink", {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer " + accessToken,
+          "Content-Type": "multipart/related; boundary=" + boundary
+        },
+        body: body
+      });
+      if (!res.ok){
+        const errText = await res.text();
+        setDriveStatus("保存に失敗しました: " + res.status);
+        console.error(errText);
+        return;
+      }
+      const data = await res.json();
+      setDriveStatus("保存しました: " + data.name);
+    } catch(e){
+      setDriveStatus("エラー: " + e.message);
+      console.error(e);
+    }
+  }
+
+  function driveUpload(filename, content, mime){
+    initTokenClientIfNeeded();
+    if (!tokenClient){
+      setDriveStatus("Googleログイン機能の読み込み中です。数秒後にもう一度お試しください。");
+      return;
+    }
+    pendingUpload = { filename: filename, content: content, mime: mime };
+    tokenClient.requestAccessToken({ prompt: accessToken ? "" : "consent" });
+  }
+
+  document.getElementById("btn-drive-csv").addEventListener("click", function(){
+    let csv = "date,type,segment,start,end\\n";
+    const d = todayKey();
+    state.attendance.forEach(function(a){
+      csv += d + ",勤怠,,"+ a.in + "," + (a.out||"") + "\\n";
+    });
+    state.work.forEach(function(w){
+      csv += d + ",作業," + w.segment + "," + w.start + "," + (w.end||"") + "\\n";
+    });
+    driveUpload("kushiro_log_" + d + ".csv", csv, "text/csv");
+  });
+
+  document.getElementById("btn-drive-kml").addEventListener("click", function(){
+    const d = todayKey();
+    const coordsStr = state.gps.map(function(p){ return p.lon + "," + p.lat + ",0"; }).join(" ");
+    const kml = '<?xml version="1.0" encoding="UTF-8"?>\\n' +
+      '<kml xmlns="http://www.opengis.net/kml/2.2"><Document>' +
+      '<name>釧路現場 軌跡 ' + d + '</name>' +
+      '<Placemark><name>GPS軌跡 ' + d + '</name>' +
+      '<Style><LineStyle><color>ff0000ff</color><width>4</width></LineStyle></Style>' +
+      '<LineString><coordinates>' + coordsStr + '</coordinates></LineString>' +
+      '</Placemark></Document></kml>';
+    driveUpload("kushiro_gps_" + d + ".kml", kml, "application/vnd.google-earth.kml+xml");
   });
 
   // init
