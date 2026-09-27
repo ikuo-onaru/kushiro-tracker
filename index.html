@@ -58,6 +58,8 @@
   .gpsdot.on { background:#2b9348; }
 
   .drivebtn { background:#1a73e8; }
+  .del-btn { flex:none; min-width:0; padding:4px 10px; font-size:11px; background:var(--danger); border-radius:6px; }
+  table td:last-child, table th:last-child { text-align:right; }
   .drivebtn:disabled { opacity:0.5; }
   .drive-status { font-size:12px; color:var(--sub); margin-top:6px; min-height:16px; }
 </style>
@@ -209,9 +211,10 @@
       attLog.className = "empty"; attLog.textContent = "記録なし"; return;
     }
     attLog.className = "";
-    let html = "<table><tr><th>出勤</th><th>退勤</th></tr>";
-    state.attendance.forEach(function(r){
-      html += "<tr><td>" + r.in + "</td><td>" + (r.out || "-") + "</td></tr>";
+    let html = "<table><tr><th>出勤</th><th>退勤</th><th></th></tr>";
+    state.attendance.forEach(function(r, idx){
+      html += "<tr><td>" + r.in + "</td><td>" + (r.out || "-") + "</td>"
+            + "<td><button class=\"del-btn\" data-kind=\"att\" data-idx=\"" + idx + "\">削除</button></td></tr>";
     });
     html += "</table>";
     attLog.innerHTML = html;
@@ -224,6 +227,13 @@
   btnClockOut.addEventListener("click", function(){
     const last = state.attendance[state.attendance.length-1];
     if (last && !last.out) last.out = timeStr(new Date());
+    saveDay(state); renderAttendance();
+  });
+  attLog.addEventListener("click", function(e){
+    const btn = e.target.closest(".del-btn");
+    if (!btn || btn.dataset.kind !== "att") return;
+    if (!confirm("この勤怠記録を削除しますか？")) return;
+    state.attendance.splice(Number(btn.dataset.idx), 1);
     saveDay(state); renderAttendance();
   });
 
@@ -277,13 +287,24 @@
       workLogEl.className = "empty"; workLogEl.textContent = "記録なし"; return;
     }
     workLogEl.className = "";
-    let html = "<table><tr><th>区間</th><th>開始</th><th>終了</th></tr>";
-    state.work.slice().reverse().forEach(function(w){
-      html += "<tr><td>" + w.segment + "</td><td>" + w.start + "</td><td>" + (w.end || "作業中") + "</td></tr>";
+    let html = "<table><tr><th>区間</th><th>開始</th><th>終了</th><th></th></tr>";
+    const total = state.work.length;
+    state.work.slice().reverse().forEach(function(w, revIdx){
+      const origIdx = total - 1 - revIdx;
+      html += "<tr><td>" + w.segment + "</td><td>" + w.start + "</td><td>" + (w.end || "作業中") + "</td>"
+            + "<td><button class=\"del-btn\" data-kind=\"work\" data-idx=\"" + origIdx + "\">削除</button></td></tr>";
     });
     html += "</table>";
     workLogEl.innerHTML = html;
   }
+
+  workLogEl.addEventListener("click", function(e){
+    const btn = e.target.closest(".del-btn");
+    if (!btn || btn.dataset.kind !== "work") return;
+    if (!confirm("この作業ログを削除しますか？")) return;
+    state.work.splice(Number(btn.dataset.idx), 1);
+    saveDay(state); renderWork();
+  });
 
   btnWorkStart.addEventListener("click", function(){
     state.work.push({ segment: segSelect.value, start: timeStr(new Date()), end: null });
@@ -363,16 +384,25 @@
     setTimeout(function(){ URL.revokeObjectURL(url); }, 2000);
   }
 
-  document.getElementById("btn-export-csv").addEventListener("click", function(){
-    let csv = "date,type,segment,start,end\n";
+  function buildCsv(){
     const d = todayKey();
+    let csv = "【勤怠】\n";
+    csv += "date,出勤,退勤\n";
     state.attendance.forEach(function(a){
-      csv += d + ",勤怠,,"+ a.in + "," + (a.out||"") + "\n";
+      csv += d + "," + a.in + "," + (a.out||"（未退勤）") + "\n";
     });
+    csv += "\n";
+    csv += "【作業ログ】\n";
+    csv += "date,区間,開始,終了\n";
     state.work.forEach(function(w){
-      csv += d + ",作業," + w.segment + "," + w.start + "," + (w.end||"") + "\n";
+      csv += d + "," + w.segment + "," + w.start + "," + (w.end||"（作業中）") + "\n";
     });
-    saveFile("kushiro_log_" + d + ".csv", "\ufeff" + csv, "text/csv");
+    return { d: d, csv: csv };
+  }
+
+  document.getElementById("btn-export-csv").addEventListener("click", function(){
+    const built = buildCsv();
+    saveFile("kushiro_log_" + built.d + ".csv", "\ufeff" + built.csv, "text/csv");
   });
 
   document.getElementById("btn-export-kml").addEventListener("click", function(){
@@ -494,15 +524,8 @@
   }
 
   document.getElementById("btn-drive-csv").addEventListener("click", function(){
-    let csv = "date,type,segment,start,end\n";
-    const d = todayKey();
-    state.attendance.forEach(function(a){
-      csv += d + ",勤怠,,"+ a.in + "," + (a.out||"") + "\n";
-    });
-    state.work.forEach(function(w){
-      csv += d + ",作業," + w.segment + "," + w.start + "," + (w.end||"") + "\n";
-    });
-    driveUpload("kushiro_log_" + d + ".csv", "\ufeff" + csv, "text/csv");
+    const built = buildCsv();
+    driveUpload("kushiro_log_" + built.d + ".csv", "\ufeff" + built.csv, "text/csv");
   });
 
   document.getElementById("btn-drive-kml").addEventListener("click", function(){
