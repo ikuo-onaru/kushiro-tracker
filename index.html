@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>釧路現場 工程・勤怠管理</title>
+<style>
+  :root {
+    --bg:#f4f5f7; --panel:#ffffff; --text:#1c1c1e; --sub:#6b7280;
+    --accent:#1b3a5c; --accent2:#2b83ba; --danger:#d7191c; --border:#e2e4e8;
+    box-sizing: border-box;
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg:#111214; --panel:#1c1e21; --text:#eee; --sub:#9aa0a6; --border:#333;
+    }
+  }
+  :root[data-theme="dark"] { --bg:#111214; --panel:#1c1e21; --text:#eee; --sub:#9aa0a6; --border:#333; }
+  html,body { height:100%; }
+  body { margin:0; background:var(--bg); color:var(--text); font-family:-apple-system,"Hiragino Kaku Gothic ProN",sans-serif; }
+  header {
+    background:var(--accent); color:#fff; padding:14px 16px;
+    padding-top: calc(14px + env(safe-area-inset-top, 0px));
+    position:sticky; top:0; z-index:10;
+  }
+  header h1 { margin:0; font-size:16px; }
+  .tabs { display:flex; background:var(--panel); border-bottom:1px solid var(--border); position:sticky; top:0; z-index:9; overflow-x:auto; }
+  .tab { flex:1; padding:12px 8px; text-align:center; font-size:13px; color:var(--sub); cursor:pointer; white-space:nowrap; border-bottom:3px solid transparent; }
+  .tab.active { color:var(--accent2); border-bottom-color:var(--accent2); font-weight:600; }
+  main { padding:14px; padding-bottom:60px; max-width:640px; margin:0 auto; }
+  .card { background:var(--panel); border-radius:12px; padding:16px; margin-bottom:14px; box-shadow:0 1px 4px rgba(0,0,0,.08); }
+  .card h2 { font-size:14px; margin:0 0 10px; color:var(--sub); }
+  .row { display:flex; gap:10px; margin-bottom:10px; flex-wrap:wrap; }
+  button {
+    border:none; border-radius:8px; padding:12px 16px; font-size:14px; font-weight:600;
+    cursor:pointer; color:#fff; flex:1; min-width:110px;
+  }
+  button.start { background:#2b9348; }
+  button.stop { background:var(--danger); }
+  button.secondary { background:var(--accent2); }
+  button.ghost { background:transparent; color:var(--accent2); border:1px solid var(--accent2); }
+  button:disabled { opacity:0.4; }
+  select, input[type=text] {
+    width:100%; padding:10px; border-radius:8px; border:1px solid var(--border);
+    background:var(--panel); color:var(--text); font-size:14px; margin-bottom:10px;
+  }
+  .status { font-size:13px; color:var(--sub); margin-bottom:8px; }
+  .big-timer { font-size:28px; font-weight:700; text-align:center; margin:10px 0; }
+  table { width:100%; border-collapse:collapse; font-size:12px; }
+  th, td { text-align:left; padding:6px 4px; border-bottom:1px solid var(--border); }
+  th { color:var(--sub); font-weight:600; }
+  .empty { color:var(--sub); font-size:13px; padding:10px 0; }
+  .pill { display:inline-block; padding:2px 8px; border-radius:10px; font-size:11px; background:var(--accent2); color:#fff; }
+  .footer-note { font-size:11px; color:var(--sub); text-align:center; margin-top:10px; }
+  .gpsdot { display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--danger); margin-right:6px; }
+  .gpsdot.on { background:#2b9348; }
+</style>
+</head>
+<body>
+<header><h1>釧路現場　工程・勤怠管理</h1></header>
+<div class="tabs">
+  <div class="tab active" data-tab="attendance">勤怠</div>
+  <div class="tab" data-tab="work">作業ログ</div>
+  <div class="tab" data-tab="gps">GPS軌跡</div>
+  <div class="tab" data-tab="history">履歴/出力</div>
+</div>
+<main>
+
+  <!-- 勤怠タブ -->
+  <section id="tab-attendance">
+    <div class="card">
+      <h2>本日の勤怠</h2>
+      <div class="status" id="attendance-status">まだ出勤していません</div>
+      <div class="row">
+        <button class="start" id="btn-clockin">出勤</button>
+        <button class="stop" id="btn-clockout" disabled>退勤</button>
+      </div>
+    </div>
+    <div class="card">
+      <h2>本日の勤怠記録</h2>
+      <div id="attendance-log" class="empty">記録なし</div>
+    </div>
+  </section>
+
+  <!-- 作業ログタブ -->
+  <section id="tab-work" style="display:none">
+    <div class="card">
+      <h2>区間を選択（10km弱ごと）</h2>
+      <select id="segment-select"></select>
+      <div class="status" id="work-status">未開始</div>
+      <div class="big-timer" id="work-timer" style="display:none">00:00:00</div>
+      <div class="row">
+        <button class="start" id="btn-work-start">この区間の作業開始</button>
+        <button class="stop" id="btn-work-stop" disabled>作業終了</button>
+      </div>
+    </div>
+    <div class="card">
+      <h2>本日の作業ログ</h2>
+      <div id="work-log" class="empty">記録なし</div>
+    </div>
+  </section>
+
+  <!-- GPSタブ -->
+  <section id="tab-gps" style="display:none">
+    <div class="card">
+      <h2>GPS軌跡記録</h2>
+      <div class="status"><span class="gpsdot" id="gps-dot"></span><span id="gps-status">停止中</span></div>
+      <div class="status" id="gps-points">記録ポイント数: 0</div>
+      <div class="row">
+        <button class="start" id="btn-gps-start">軌跡記録開始</button>
+        <button class="stop" id="btn-gps-stop" disabled>記録停止</button>
+      </div>
+      <div class="footer-note">スマホの位置情報許可が必要です。バックグラウンドでは記録が止まる場合があります（画面をつけたままにしてください）。</div>
+    </div>
+  </section>
+
+  <!-- 履歴/出力タブ -->
+  <section id="tab-history" style="display:none">
+    <div class="card">
+      <h2>データの出力</h2>
+      <div class="row">
+        <button class="secondary" id="btn-export-csv">作業ログをCSVで保存</button>
+      </div>
+      <div class="row">
+        <button class="secondary" id="btn-export-kml">GPS軌跡をKMLで保存（Google Earth用）</button>
+      </div>
+      <div class="row">
+        <button class="ghost" id="btn-clear">本日のデータを消去</button>
+      </div>
+      <div class="footer-note">データはこの端末（ブラウザ）内にのみ保存されます。日付が変わると自動的に新しい記録になります。</div>
+    </div>
+  </section>
+
+</main>
+
+<script>
+(function(){
+  "use strict";
+
+  const SEGMENTS = [{"name": "路線240_No32_1", "route": "240", "seg_no": 32, "part": 1, "of": 8, "roadtype": "現道"}, {"name": "路線240_No32_2", "route": "240", "seg_no": 32, "part": 2, "of": 8, "roadtype": "現道"}, {"name": "路線240_No32_3", "route": "240", "seg_no": 32, "part": 3, "of": 8, "roadtype": "現道"}, {"name": "路線240_No32_4", "route": "240", "seg_no": 32, "part": 4, "of": 8, "roadtype": "現道"}, {"name": "路線240_No32_5", "route": "240", "seg_no": 32, "part": 5, "of": 8, "roadtype": "現道"}, {"name": "路線240_No32_6", "route": "240", "seg_no": 32, "part": 6, "of": 8, "roadtype": "現道"}, {"name": "路線240_No32_7", "route": "240", "seg_no": 32, "part": 7, "of": 8, "roadtype": "現道"}, {"name": "路線240_No32_8", "route": "240", "seg_no": 32, "part": 8, "of": 8, "roadtype": "現道"}, {"name": "路線241_No33_1", "route": "241", "seg_no": 33, "part": 1, "of": 4, "roadtype": "現道"}, {"name": "路線241_No33_2", "route": "241", "seg_no": 33, "part": 2, "of": 4, "roadtype": "現道"}, {"name": "路線241_No33_3", "route": "241", "seg_no": 33, "part": 3, "of": 4, "roadtype": "現道"}, {"name": "路線241_No33_4", "route": "241", "seg_no": 33, "part": 4, "of": 4, "roadtype": "現道"}, {"name": "路線241_No34_1", "route": "241", "seg_no": 34, "part": 1, "of": 1, "roadtype": "現道"}, {"name": "路線243_No35_1", "route": "243", "seg_no": 35, "part": 1, "of": 12, "roadtype": "現道"}, {"name": "路線243_No35_2", "route": "243", "seg_no": 35, "part": 2, "of": 12, "roadtype": "現道"}, {"name": "路線243_No35_3", "route": "243", "seg_no": 35, "part": 3, "of": 12, "roadtype": "現道"}, {"name": "路線243_No35_4", "route": "243", "seg_no": 35, "part": 4, "of": 12, "roadtype": "現道"}, {"name": "路線243_No35_5", "route": "243", "seg_no": 35, "part": 5, "of": 12, "roadtype": "現道"}, {"name": "路線243_No35_6", "route": "243", "seg_no": 35, "part": 6, "of": 12, "roadtype": "現道"}, {"name": "路線243_No35_7", "route": "243", "seg_no": 35, "part": 7, "of": 12, "roadtype": "現道"}, {"name": "路線243_No35_8", "route": "243", "seg_no": 35, "part": 8, "of": 12, "roadtype": "現道"}, {"name": "路線243_No35_9", "route": "243", "seg_no": 35, "part": 9, "of": 12, "roadtype": "現道"}, {"name": "路線243_No35_10", "route": "243", "seg_no": 35, "part": 10, "of": 12, "roadtype": "現道"}, {"name": "路線243_No35_11", "route": "243", "seg_no": 35, "part": 11, "of": 12, "roadtype": "現道"}, {"name": "路線243_No35_12", "route": "243", "seg_no": 35, "part": 12, "of": 12, "roadtype": "現道"}, {"name": "路線244_No36_1", "route": "244", "seg_no": 36, "part": 1, "of": 9, "roadtype": "現道"}, {"name": "路線244_No36_2", "route": "244", "seg_no": 36, "part": 2, "of": 9, "roadtype": "現道"}, {"name": "路線244_No36_3", "route": "244", "seg_no": 36, "part": 3, "of": 9, "roadtype": "現道"}, {"name": "路線244_No36_4", "route": "244", "seg_no": 36, "part": 4, "of": 9, "roadtype": "現道"}, {"name": "路線244_No36_5", "route": "244", "seg_no": 36, "part": 5, "of": 9, "roadtype": "現道"}, {"name": "路線244_No36_6", "route": "244", "seg_no": 36, "part": 6, "of": 9, "roadtype": "現道"}, {"name": "路線244_No36_7", "route": "244", "seg_no": 36, "part": 7, "of": 9, "roadtype": "現道"}, {"name": "路線244_No36_8", "route": "244", "seg_no": 36, "part": 8, "of": 9, "roadtype": "現道"}, {"name": "路線244_No36_9", "route": "244", "seg_no": 36, "part": 9, "of": 9, "roadtype": "現道"}, {"name": "路線272_No37_1", "route": "272", "seg_no": 37, "part": 1, "of": 10, "roadtype": "現道"}, {"name": "路線272_No37_2", "route": "272", "seg_no": 37, "part": 2, "of": 10, "roadtype": "現道"}, {"name": "路線272_No37_3", "route": "272", "seg_no": 37, "part": 3, "of": 10, "roadtype": "現道"}, {"name": "路線272_No37_4", "route": "272", "seg_no": 37, "part": 4, "of": 10, "roadtype": "現道"}, {"name": "路線272_No37_5", "route": "272", "seg_no": 37, "part": 5, "of": 10, "roadtype": "現道"}, {"name": "路線272_No37_6", "route": "272", "seg_no": 37, "part": 6, "of": 10, "roadtype": "現道"}, {"name": "路線272_No37_7", "route": "272", "seg_no": 37, "part": 7, "of": 10, "roadtype": "現道"}, {"name": "路線272_No37_8", "route": "272", "seg_no": 37, "part": 8, "of": 10, "roadtype": "現道"}, {"name": "路線272_No37_9", "route": "272", "seg_no": 37, "part": 9, "of": 10, "roadtype": "現道"}, {"name": "路線272_No37_10", "route": "272", "seg_no": 37, "part": 10, "of": 10, "roadtype": "現道"}, {"name": "路線274_No38_1", "route": "274", "seg_no": 38, "part": 1, "of": 2, "roadtype": "現道"}, {"name": "路線274_No38_2", "route": "274", "seg_no": 38, "part": 2, "of": 2, "roadtype": "現道"}, {"name": "路線274_No39_1", "route": "274", "seg_no": 39, "part": 1, "of": 7, "roadtype": "現道"}, {"name": "路線274_No39_2", "route": "274", "seg_no": 39, "part": 2, "of": 7, "roadtype": "現道"}, {"name": "路線274_No39_3", "route": "274", "seg_no": 39, "part": 3, "of": 7, "roadtype": "現道"}, {"name": "路線274_No39_4", "route": "274", "seg_no": 39, "part": 4, "of": 7, "roadtype": "現道"}, {"name": "路線274_No39_5", "route": "274", "seg_no": 39, "part": 5, "of": 7, "roadtype": "現道"}, {"name": "路線274_No39_6", "route": "274", "seg_no": 39, "part": 6, "of": 7, "roadtype": "現道"}, {"name": "路線274_No39_7", "route": "274", "seg_no": 39, "part": 7, "of": 7, "roadtype": "現道"}, {"name": "路線38_No40_1", "route": "38", "seg_no": 40, "part": 1, "of": 7, "roadtype": "新道"}, {"name": "路線38_No40_2", "route": "38", "seg_no": 40, "part": 2, "of": 7, "roadtype": "新道"}, {"name": "路線38_No40_3", "route": "38", "seg_no": 40, "part": 3, "of": 7, "roadtype": "新道"}, {"name": "路線38_No40_4", "route": "38", "seg_no": 40, "part": 4, "of": 7, "roadtype": "新道"}, {"name": "路線38_No40_5", "route": "38", "seg_no": 40, "part": 5, "of": 7, "roadtype": "新道"}, {"name": "路線38_No40_6", "route": "38", "seg_no": 40, "part": 6, "of": 7, "roadtype": "新道"}, {"name": "路線38_No40_7", "route": "38", "seg_no": 40, "part": 7, "of": 7, "roadtype": "新道"}, {"name": "路線38_No41_1", "route": "38", "seg_no": 41, "part": 1, "of": 1, "roadtype": "新道"}, {"name": "路線38_No42_1", "route": "38", "seg_no": 42, "part": 1, "of": 5, "roadtype": "現道"}, {"name": "路線38_No42_2", "route": "38", "seg_no": 42, "part": 2, "of": 5, "roadtype": "現道"}, {"name": "路線38_No42_3", "route": "38", "seg_no": 42, "part": 3, "of": 5, "roadtype": "現道"}, {"name": "路線38_No42_4", "route": "38", "seg_no": 42, "part": 4, "of": 5, "roadtype": "現道"}, {"name": "路線38_No42_5", "route": "38", "seg_no": 42, "part": 5, "of": 5, "roadtype": "現道"}, {"name": "路線38_No43_1", "route": "38", "seg_no": 43, "part": 1, "of": 2, "roadtype": "現道"}, {"name": "路線38_No43_2", "route": "38", "seg_no": 43, "part": 2, "of": 2, "roadtype": "現道"}, {"name": "路線44_No44_1", "route": "44", "seg_no": 44, "part": 1, "of": 12, "roadtype": "現道"}, {"name": "路線44_No44_2", "route": "44", "seg_no": 44, "part": 2, "of": 12, "roadtype": "現道"}, {"name": "路線44_No44_3", "route": "44", "seg_no": 44, "part": 3, "of": 12, "roadtype": "現道"}, {"name": "路線44_No44_4", "route": "44", "seg_no": 44, "part": 4, "of": 12, "roadtype": "現道"}, {"name": "路線44_No44_5", "route": "44", "seg_no": 44, "part": 5, "of": 12, "roadtype": "現道"}, {"name": "路線44_No44_6", "route": "44", "seg_no": 44, "part": 6, "of": 12, "roadtype": "現道"}, {"name": "路線44_No44_7", "route": "44", "seg_no": 44, "part": 7, "of": 12, "roadtype": "現道"}, {"name": "路線44_No44_8", "route": "44", "seg_no": 44, "part": 8, "of": 12, "roadtype": "現道"}, {"name": "路線44_No44_9", "route": "44", "seg_no": 44, "part": 9, "of": 12, "roadtype": "現道"}, {"name": "路線44_No44_10", "route": "44", "seg_no": 44, "part": 10, "of": 12, "roadtype": "現道"}, {"name": "路線44_No44_11", "route": "44", "seg_no": 44, "part": 11, "of": 12, "roadtype": "現道"}, {"name": "路線44_No44_12", "route": "44", "seg_no": 44, "part": 12, "of": 12, "roadtype": "現道"}, {"name": "路線44_No45_1", "route": "44", "seg_no": 45, "part": 1, "of": 1, "roadtype": "現道"}, {"name": "路線44_No46_1", "route": "44", "seg_no": 46, "part": 1, "of": 1, "roadtype": "現道"}];
+
+  function todayKey(){
+    const d = new Date();
+    return d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0");
+  }
+  function timeStr(d){
+    return String(d.getHours()).padStart(2,"0") + ":" + String(d.getMinutes()).padStart(2,"0") + ":" + String(d.getSeconds()).padStart(2,"0");
+  }
+
+  function loadDay(){
+    const key = "kushiro_log_" + todayKey();
+    try {
+      const raw = localStorage.getItem(key);
+      if (raw) return JSON.parse(raw);
+    } catch(e) { console.warn("storage read failed", e); }
+    return { attendance: [], work: [], gps: [] };
+  }
+  function saveDay(data){
+    const key = "kushiro_log_" + todayKey();
+    try { localStorage.setItem(key, JSON.stringify(data)); }
+    catch(e) { console.warn("storage save failed", e); }
+  }
+
+  let state = loadDay();
+
+  // ---------- Tabs ----------
+  document.querySelectorAll(".tab").forEach(function(tab){
+    tab.addEventListener("click", function(){
+      document.querySelectorAll(".tab").forEach(t=>t.classList.remove("active"));
+      tab.classList.add("active");
+      document.querySelectorAll("main > section").forEach(s=>s.style.display="none");
+      document.getElementById("tab-" + tab.dataset.tab).style.display = "";
+    });
+  });
+
+  // ---------- 勤怠 ----------
+  const btnClockIn = document.getElementById("btn-clockin");
+  const btnClockOut = document.getElementById("btn-clockout");
+  const attStatus = document.getElementById("attendance-status");
+  const attLog = document.getElementById("attendance-log");
+
+  function renderAttendance(){
+    const clockedIn = state.attendance.length && !state.attendance[state.attendance.length-1].out;
+    btnClockIn.disabled = !!clockedIn;
+    btnClockOut.disabled = !clockedIn;
+    attStatus.textContent = clockedIn
+      ? "出勤中（" + state.attendance[state.attendance.length-1].in + " 出勤）"
+      : (state.attendance.length ? "退勤済み" : "まだ出勤していません");
+
+    if (!state.attendance.length){
+      attLog.className = "empty"; attLog.textContent = "記録なし"; return;
+    }
+    attLog.className = "";
+    let html = "<table><tr><th>出勤</th><th>退勤</th></tr>";
+    state.attendance.forEach(function(r){
+      html += "<tr><td>" + r.in + "</td><td>" + (r.out || "-") + "</td></tr>";
+    });
+    html += "</table>";
+    attLog.innerHTML = html;
+  }
+
+  btnClockIn.addEventListener("click", function(){
+    state.attendance.push({ in: timeStr(new Date()), out: null });
+    saveDay(state); renderAttendance();
+  });
+  btnClockOut.addEventListener("click", function(){
+    const last = state.attendance[state.attendance.length-1];
+    if (last && !last.out) last.out = timeStr(new Date());
+    saveDay(state); renderAttendance();
+  });
+
+  // ---------- 作業ログ ----------
+  const segSelect = document.getElementById("segment-select");
+  SEGMENTS.forEach(function(s){
+    const opt = document.createElement("option");
+    opt.value = s.name;
+    opt.textContent = s.name + "（路線" + s.route + " " + s.roadtype + " " + s.part + "/" + s.of + "）";
+    segSelect.appendChild(opt);
+  });
+
+  const btnWorkStart = document.getElementById("btn-work-start");
+  const btnWorkStop = document.getElementById("btn-work-stop");
+  const workStatus = document.getElementById("work-status");
+  const workTimerEl = document.getElementById("work-timer");
+  const workLogEl = document.getElementById("work-log");
+  let workTimerInterval = null;
+
+  function renderWork(){
+    const active = state.work.find(w => !w.end);
+    if (active){
+      segSelect.value = active.segment;
+      segSelect.disabled = true;
+      btnWorkStart.disabled = true;
+      btnWorkStop.disabled = false;
+      workStatus.textContent = active.segment + " を作業中（開始 " + active.start + "）";
+      workTimerEl.style.display = "";
+      if (!workTimerInterval){
+        const startDate = new Date();
+        const [h,m,s] = active.start.split(":").map(Number);
+        startDate.setHours(h,m,s,0);
+        workTimerInterval = setInterval(function(){
+          const diff = Math.max(0, Math.floor((new Date() - startDate)/1000));
+          const hh = String(Math.floor(diff/3600)).padStart(2,"0");
+          const mm = String(Math.floor((diff%3600)/60)).padStart(2,"0");
+          const ss = String(diff%60).padStart(2,"0");
+          workTimerEl.textContent = hh+":"+mm+":"+ss;
+        }, 1000);
+      }
+    } else {
+      segSelect.disabled = false;
+      btnWorkStart.disabled = false;
+      btnWorkStop.disabled = true;
+      workStatus.textContent = "未開始";
+      workTimerEl.style.display = "none";
+      if (workTimerInterval){ clearInterval(workTimerInterval); workTimerInterval = null; }
+    }
+
+    if (!state.work.length){
+      workLogEl.className = "empty"; workLogEl.textContent = "記録なし"; return;
+    }
+    workLogEl.className = "";
+    let html = "<table><tr><th>区間</th><th>開始</th><th>終了</th></tr>";
+    state.work.slice().reverse().forEach(function(w){
+      html += "<tr><td>" + w.segment + "</td><td>" + w.start + "</td><td>" + (w.end || "作業中") + "</td></tr>";
+    });
+    html += "</table>";
+    workLogEl.innerHTML = html;
+  }
+
+  btnWorkStart.addEventListener("click", function(){
+    state.work.push({ segment: segSelect.value, start: timeStr(new Date()), end: null });
+    saveDay(state); renderWork();
+  });
+  btnWorkStop.addEventListener("click", function(){
+    const active = state.work.find(w => !w.end);
+    if (active) active.end = timeStr(new Date());
+    saveDay(state); renderWork();
+  });
+
+  // ---------- GPS ----------
+  const btnGpsStart = document.getElementById("btn-gps-start");
+  const btnGpsStop = document.getElementById("btn-gps-stop");
+  const gpsDot = document.getElementById("gps-dot");
+  const gpsStatusEl = document.getElementById("gps-status");
+  const gpsPointsEl = document.getElementById("gps-points");
+  let watchId = null;
+
+  function renderGps(){
+    gpsPointsEl.textContent = "記録ポイント数: " + state.gps.length;
+  }
+
+  btnGpsStart.addEventListener("click", function(){
+    if (!navigator.geolocation){
+      gpsStatusEl.textContent = "この端末では位置情報が利用できません";
+      return;
+    }
+    watchId = navigator.geolocation.watchPosition(function(pos){
+      state.gps.push({
+        lat: pos.coords.latitude,
+        lon: pos.coords.longitude,
+        t: timeStr(new Date())
+      });
+      saveDay(state);
+      renderGps();
+    }, function(err){
+      gpsStatusEl.textContent = "位置情報エラー: " + err.message;
+    }, { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 });
+
+    gpsDot.classList.add("on");
+    gpsStatusEl.textContent = "記録中";
+    btnGpsStart.disabled = true;
+    btnGpsStop.disabled = false;
+  });
+
+  btnGpsStop.addEventListener("click", function(){
+    if (watchId !== null && navigator.geolocation){
+      navigator.geolocation.clearWatch(watchId);
+      watchId = null;
+    }
+    gpsDot.classList.remove("on");
+    gpsStatusEl.textContent = "停止中";
+    btnGpsStart.disabled = false;
+    btnGpsStop.disabled = true;
+  });
+
+  // ---------- 出力 ----------
+  let downloadsCap = null;
+  if (window.claude && window.claude.use){
+    window.claude.use("downloads").then(function(d){ downloadsCap = d; }).catch(function(){ downloadsCap = null; });
+  }
+
+  async function saveFile(filename, text, mime){
+    if (downloadsCap){
+      try {
+        await downloadsCap.save({ filename: filename, data: text });
+        return;
+      } catch(e){ console.warn("downloads capability failed, falling back", e); }
+    }
+    // fallback: plain anchor download (works when opened as a normal local/browser page)
+    const blob = new Blob([text], { type: mime || "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(function(){ URL.revokeObjectURL(url); }, 2000);
+  }
+
+  document.getElementById("btn-export-csv").addEventListener("click", function(){
+    let csv = "date,type,segment,start,end\n";
+    const d = todayKey();
+    state.attendance.forEach(function(a){
+      csv += d + ",勤怠,,"+ a.in + "," + (a.out||"") + "\n";
+    });
+    state.work.forEach(function(w){
+      csv += d + ",作業," + w.segment + "," + w.start + "," + (w.end||"") + "\n";
+    });
+    saveFile("kushiro_log_" + d + ".csv", csv, "text/csv");
+  });
+
+  document.getElementById("btn-export-kml").addEventListener("click", function(){
+    const d = todayKey();
+    const coordsStr = state.gps.map(function(p){ return p.lon + "," + p.lat + ",0"; }).join(" ");
+    const kml = '<?xml version="1.0" encoding="UTF-8"?>\n' +
+      '<kml xmlns="http://www.opengis.net/kml/2.2"><Document>' +
+      '<name>釧路現場 軌跡 ' + d + '</name>' +
+      '<Placemark><name>GPS軌跡 ' + d + '</name>' +
+      '<Style><LineStyle><color>ff0000ff</color><width>4</width></LineStyle></Style>' +
+      '<LineString><coordinates>' + coordsStr + '</coordinates></LineString>' +
+      '</Placemark></Document></kml>';
+    saveFile("kushiro_gps_" + d + ".kml", kml, "application/vnd.google-earth.kml+xml");
+  });
+
+  document.getElementById("btn-clear").addEventListener("click", function(){
+    if (!confirm("本日の記録をすべて消去しますか？")) return;
+    state = { attendance: [], work: [], gps: [] };
+    saveDay(state);
+    renderAttendance(); renderWork(); renderGps();
+  });
+
+  // init
+  renderAttendance();
+  renderWork();
+  renderGps();
+})();
+</script>
+</body>
+</html>
