@@ -1,0 +1,652 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>釧路現場 工程・勤怠管理</title>
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="釧路トラッカー">
+<meta name="theme-color" content="#1b3a5c">
+<style>
+  :root {
+    --bg:#f4f5f7; --panel:#ffffff; --text:#1c1c1e; --sub:#6b7280;
+    --accent:#1b3a5c; --accent2:#2b83ba; --danger:#d7191c; --border:#e2e4e8;
+    box-sizing: border-box;
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg:#111214; --panel:#1c1e21; --text:#eee; --sub:#9aa0a6; --border:#333;
+    }
+  }
+  :root[data-theme="dark"] { --bg:#111214; --panel:#1c1e21; --text:#eee; --sub:#9aa0a6; --border:#333; }
+  html,body { height:100%; }
+  body { margin:0; background:var(--bg); color:var(--text); font-family:-apple-system,"Hiragino Kaku Gothic ProN",sans-serif; }
+  header {
+    background:var(--accent); color:#fff; padding:14px 16px;
+    padding-top: calc(14px + env(safe-area-inset-top, 0px));
+    position:sticky; top:0; z-index:10;
+  }
+  header h1 { margin:0; font-size:16px; }
+  .tabs { display:flex; background:var(--panel); border-bottom:1px solid var(--border); position:sticky; top:0; z-index:9; overflow-x:auto; }
+  .tab { flex:1; padding:12px 8px; text-align:center; font-size:13px; color:var(--sub); cursor:pointer; white-space:nowrap; border-bottom:3px solid transparent; }
+  .tab.active { color:var(--accent2); border-bottom-color:var(--accent2); font-weight:600; }
+  main { padding:14px; padding-bottom:60px; max-width:640px; margin:0 auto; }
+  .card { background:var(--panel); border-radius:12px; padding:16px; margin-bottom:14px; box-shadow:0 1px 4px rgba(0,0,0,.08); }
+  .card h2 { font-size:14px; margin:0 0 10px; color:var(--sub); }
+  .row { display:flex; gap:10px; margin-bottom:10px; flex-wrap:wrap; }
+  button {
+    border:none; border-radius:8px; padding:12px 16px; font-size:14px; font-weight:600;
+    cursor:pointer; color:#fff; flex:1; min-width:110px;
+  }
+  button.start { background:#2b9348; }
+  button.stop { background:var(--danger); }
+  button.secondary { background:var(--accent2); }
+  button.ghost { background:transparent; color:var(--accent2); border:1px solid var(--accent2); }
+  button:disabled { opacity:0.4; }
+  select, input[type=text] {
+    width:100%; padding:10px; border-radius:8px; border:1px solid var(--border);
+    background:var(--panel); color:var(--text); font-size:14px; margin-bottom:10px;
+  }
+  .status { font-size:13px; color:var(--sub); margin-bottom:8px; }
+  .big-timer { font-size:28px; font-weight:700; text-align:center; margin:10px 0; }
+  table { width:100%; border-collapse:collapse; font-size:12px; }
+  th, td { text-align:left; padding:6px 4px; border-bottom:1px solid var(--border); }
+  th { color:var(--sub); font-weight:600; }
+  .empty { color:var(--sub); font-size:13px; padding:10px 0; }
+  .pill { display:inline-block; padding:2px 8px; border-radius:10px; font-size:11px; background:var(--accent2); color:#fff; }
+  .footer-note { font-size:11px; color:var(--sub); text-align:center; margin-top:10px; }
+  .gpsdot { display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--danger); margin-right:6px; }
+  .gpsdot.on { background:#2b9348; }
+
+  .drivebtn { background:#1a73e8; }
+  .del-btn { flex:none; min-width:0; padding:4px 10px; font-size:11px; background:var(--danger); border-radius:6px; }
+  .mini-x { flex:none; min-width:0; padding:0 5px; font-size:11px; line-height:16px; background:var(--sub); color:#fff; border-radius:50%; margin-left:4px; }
+  .date-label { font-size:13px; font-weight:600; color:var(--text); margin-bottom:6px; }
+  table td:last-child, table th:last-child { text-align:right; }
+  .drivebtn:disabled { opacity:0.5; }
+  .drive-status { font-size:12px; color:var(--sub); margin-top:6px; min-height:16px; }
+</style>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+</head>
+<body>
+<header><h1>釧路現場　工程・勤怠管理</h1></header>
+<div class="tabs">
+  <div class="tab active" data-tab="attendance">勤怠</div>
+  <div class="tab" data-tab="work">作業ログ</div>
+  <div class="tab" data-tab="gps">GPS軌跡</div>
+  <div class="tab" data-tab="history">履歴/出力</div>
+</div>
+<main>
+
+  <!-- 勤怠タブ -->
+  <section id="tab-attendance">
+    <div class="card">
+      <h2>本日の勤怠</h2>
+      <div class="status" id="attendance-status">まだ出勤していません</div>
+      <div class="row">
+        <button class="start" id="btn-clockin">出勤</button>
+        <button class="stop" id="btn-clockout" disabled>退勤</button>
+      </div>
+    </div>
+    <div class="card">
+      <h2>本日の勤怠記録</h2>
+      <div id="attendance-log" class="empty">記録なし</div>
+    </div>
+  </section>
+
+  <!-- 作業ログタブ -->
+  <section id="tab-work" style="display:none">
+    <div class="card">
+      <h2>区間を選択（10km弱ごと）</h2>
+      <select id="segment-select"></select>
+      <div class="status" id="work-status">未開始</div>
+      <div class="big-timer" id="work-timer" style="display:none">00:00:00</div>
+      <div class="row">
+        <button class="start" id="btn-work-start">この区間の作業開始</button>
+        <button class="stop" id="btn-work-stop" disabled>作業終了</button>
+      </div>
+    </div>
+    <div class="card">
+      <h2>本日の作業ログ</h2>
+      <div id="work-log" class="empty">記録なし</div>
+    </div>
+  </section>
+
+  <!-- GPSタブ -->
+  <section id="tab-gps" style="display:none">
+    <div class="card">
+      <h2>GPS軌跡記録</h2>
+      <div class="status"><span class="gpsdot" id="gps-dot"></span><span id="gps-status">停止中</span></div>
+      <div class="status" id="gps-points">記録ポイント数: 0</div>
+      <div class="row">
+        <button class="start" id="btn-gps-start">軌跡記録開始</button>
+        <button class="stop" id="btn-gps-stop" disabled>記録停止</button>
+      </div>
+      <div class="footer-note">スマホの位置情報許可が必要です。バックグラウンドでは記録が止まる場合があります（画面をつけたままにしてください）。</div>
+    </div>
+  </section>
+
+  <!-- 履歴/出力タブ -->
+  <section id="tab-history" style="display:none">
+    <div class="card">
+      <h2>過去の履歴を見る</h2>
+      <select id="history-date-select"></select>
+      <div class="row">
+        <button class="secondary" id="btn-history-view">この日を表示</button>
+      </div>
+      <div id="history-view-result"></div>
+    </div>
+    <div class="card">
+      <h2>月を選んでドライブに保存（月報用）</h2>
+      <select id="history-month-select"></select>
+      <div class="row">
+        <button class="drivebtn" id="btn-history-drive-month">選択した月をドライブに保存</button>
+      </div>
+      <div class="drive-status" id="drive-status-all"></div>
+      <div class="footer-note">選択した月（1日〜末日）に記録されているデータをすべて1つのファイルにまとめてドライブに保存します。月末の集計にお使いください。</div>
+    </div>
+    <div class="card">
+      <h2>GPS軌跡（本日分）</h2>
+      <div class="row">
+        <button class="drivebtn" id="btn-drive-kml">GPS軌跡をドライブに保存</button>
+      </div>
+      <div class="drive-status" id="drive-status"></div>
+      <div class="footer-note">初回はGoogleアカウントへのログインとアクセス許可が必要です。保存先はGoogleドライブ内に自動作成される「kushiro-tracker」フォルダです。ドライブ内のKMLファイルはGoogle Earthアプリからそのまま開けます。</div>
+      <div class="footer-note">データはこの端末（ブラウザ）内にのみ保存されます。日付が変わると自動的に新しい記録になります。</div>
+    </div>
+  </section>
+
+</main>
+
+<script>
+(function(){
+  "use strict";
+
+  const SEGMENTS = [{"name": "路線240_No32_1", "route": "240", "seg_no": 32, "part": 1, "of": 8, "roadtype": "現道"}, {"name": "路線240_No32_2", "route": "240", "seg_no": 32, "part": 2, "of": 8, "roadtype": "現道"}, {"name": "路線240_No32_3", "route": "240", "seg_no": 32, "part": 3, "of": 8, "roadtype": "現道"}, {"name": "路線240_No32_4", "route": "240", "seg_no": 32, "part": 4, "of": 8, "roadtype": "現道"}, {"name": "路線240_No32_5", "route": "240", "seg_no": 32, "part": 5, "of": 8, "roadtype": "現道"}, {"name": "路線240_No32_6", "route": "240", "seg_no": 32, "part": 6, "of": 8, "roadtype": "現道"}, {"name": "路線240_No32_7", "route": "240", "seg_no": 32, "part": 7, "of": 8, "roadtype": "現道"}, {"name": "路線240_No32_8", "route": "240", "seg_no": 32, "part": 8, "of": 8, "roadtype": "現道"}, {"name": "路線241_No33_1", "route": "241", "seg_no": 33, "part": 1, "of": 4, "roadtype": "現道"}, {"name": "路線241_No33_2", "route": "241", "seg_no": 33, "part": 2, "of": 4, "roadtype": "現道"}, {"name": "路線241_No33_3", "route": "241", "seg_no": 33, "part": 3, "of": 4, "roadtype": "現道"}, {"name": "路線241_No33_4", "route": "241", "seg_no": 33, "part": 4, "of": 4, "roadtype": "現道"}, {"name": "路線241_No34_1", "route": "241", "seg_no": 34, "part": 1, "of": 1, "roadtype": "現道"}, {"name": "路線243_No35_1", "route": "243", "seg_no": 35, "part": 1, "of": 12, "roadtype": "現道"}, {"name": "路線243_No35_2", "route": "243", "seg_no": 35, "part": 2, "of": 12, "roadtype": "現道"}, {"name": "路線243_No35_3", "route": "243", "seg_no": 35, "part": 3, "of": 12, "roadtype": "現道"}, {"name": "路線243_No35_4", "route": "243", "seg_no": 35, "part": 4, "of": 12, "roadtype": "現道"}, {"name": "路線243_No35_5", "route": "243", "seg_no": 35, "part": 5, "of": 12, "roadtype": "現道"}, {"name": "路線243_No35_6", "route": "243", "seg_no": 35, "part": 6, "of": 12, "roadtype": "現道"}, {"name": "路線243_No35_7", "route": "243", "seg_no": 35, "part": 7, "of": 12, "roadtype": "現道"}, {"name": "路線243_No35_8", "route": "243", "seg_no": 35, "part": 8, "of": 12, "roadtype": "現道"}, {"name": "路線243_No35_9", "route": "243", "seg_no": 35, "part": 9, "of": 12, "roadtype": "現道"}, {"name": "路線243_No35_10", "route": "243", "seg_no": 35, "part": 10, "of": 12, "roadtype": "現道"}, {"name": "路線243_No35_11", "route": "243", "seg_no": 35, "part": 11, "of": 12, "roadtype": "現道"}, {"name": "路線243_No35_12", "route": "243", "seg_no": 35, "part": 12, "of": 12, "roadtype": "現道"}, {"name": "路線244_No36_1", "route": "244", "seg_no": 36, "part": 1, "of": 9, "roadtype": "現道"}, {"name": "路線244_No36_2", "route": "244", "seg_no": 36, "part": 2, "of": 9, "roadtype": "現道"}, {"name": "路線244_No36_3", "route": "244", "seg_no": 36, "part": 3, "of": 9, "roadtype": "現道"}, {"name": "路線244_No36_4", "route": "244", "seg_no": 36, "part": 4, "of": 9, "roadtype": "現道"}, {"name": "路線244_No36_5", "route": "244", "seg_no": 36, "part": 5, "of": 9, "roadtype": "現道"}, {"name": "路線244_No36_6", "route": "244", "seg_no": 36, "part": 6, "of": 9, "roadtype": "現道"}, {"name": "路線244_No36_7", "route": "244", "seg_no": 36, "part": 7, "of": 9, "roadtype": "現道"}, {"name": "路線244_No36_8", "route": "244", "seg_no": 36, "part": 8, "of": 9, "roadtype": "現道"}, {"name": "路線244_No36_9", "route": "244", "seg_no": 36, "part": 9, "of": 9, "roadtype": "現道"}, {"name": "路線272_No37_1", "route": "272", "seg_no": 37, "part": 1, "of": 10, "roadtype": "現道"}, {"name": "路線272_No37_2", "route": "272", "seg_no": 37, "part": 2, "of": 10, "roadtype": "現道"}, {"name": "路線272_No37_3", "route": "272", "seg_no": 37, "part": 3, "of": 10, "roadtype": "現道"}, {"name": "路線272_No37_4", "route": "272", "seg_no": 37, "part": 4, "of": 10, "roadtype": "現道"}, {"name": "路線272_No37_5", "route": "272", "seg_no": 37, "part": 5, "of": 10, "roadtype": "現道"}, {"name": "路線272_No37_6", "route": "272", "seg_no": 37, "part": 6, "of": 10, "roadtype": "現道"}, {"name": "路線272_No37_7", "route": "272", "seg_no": 37, "part": 7, "of": 10, "roadtype": "現道"}, {"name": "路線272_No37_8", "route": "272", "seg_no": 37, "part": 8, "of": 10, "roadtype": "現道"}, {"name": "路線272_No37_9", "route": "272", "seg_no": 37, "part": 9, "of": 10, "roadtype": "現道"}, {"name": "路線272_No37_10", "route": "272", "seg_no": 37, "part": 10, "of": 10, "roadtype": "現道"}, {"name": "路線274_No38_1", "route": "274", "seg_no": 38, "part": 1, "of": 2, "roadtype": "現道"}, {"name": "路線274_No38_2", "route": "274", "seg_no": 38, "part": 2, "of": 2, "roadtype": "現道"}, {"name": "路線274_No39_1", "route": "274", "seg_no": 39, "part": 1, "of": 7, "roadtype": "現道"}, {"name": "路線274_No39_2", "route": "274", "seg_no": 39, "part": 2, "of": 7, "roadtype": "現道"}, {"name": "路線274_No39_3", "route": "274", "seg_no": 39, "part": 3, "of": 7, "roadtype": "現道"}, {"name": "路線274_No39_4", "route": "274", "seg_no": 39, "part": 4, "of": 7, "roadtype": "現道"}, {"name": "路線274_No39_5", "route": "274", "seg_no": 39, "part": 5, "of": 7, "roadtype": "現道"}, {"name": "路線274_No39_6", "route": "274", "seg_no": 39, "part": 6, "of": 7, "roadtype": "現道"}, {"name": "路線274_No39_7", "route": "274", "seg_no": 39, "part": 7, "of": 7, "roadtype": "現道"}, {"name": "路線38_No40_1", "route": "38", "seg_no": 40, "part": 1, "of": 7, "roadtype": "新道"}, {"name": "路線38_No40_2", "route": "38", "seg_no": 40, "part": 2, "of": 7, "roadtype": "新道"}, {"name": "路線38_No40_3", "route": "38", "seg_no": 40, "part": 3, "of": 7, "roadtype": "新道"}, {"name": "路線38_No40_4", "route": "38", "seg_no": 40, "part": 4, "of": 7, "roadtype": "新道"}, {"name": "路線38_No40_5", "route": "38", "seg_no": 40, "part": 5, "of": 7, "roadtype": "新道"}, {"name": "路線38_No40_6", "route": "38", "seg_no": 40, "part": 6, "of": 7, "roadtype": "新道"}, {"name": "路線38_No40_7", "route": "38", "seg_no": 40, "part": 7, "of": 7, "roadtype": "新道"}, {"name": "路線38_No41_1", "route": "38", "seg_no": 41, "part": 1, "of": 1, "roadtype": "新道"}, {"name": "路線38_No42_1", "route": "38", "seg_no": 42, "part": 1, "of": 5, "roadtype": "現道"}, {"name": "路線38_No42_2", "route": "38", "seg_no": 42, "part": 2, "of": 5, "roadtype": "現道"}, {"name": "路線38_No42_3", "route": "38", "seg_no": 42, "part": 3, "of": 5, "roadtype": "現道"}, {"name": "路線38_No42_4", "route": "38", "seg_no": 42, "part": 4, "of": 5, "roadtype": "現道"}, {"name": "路線38_No42_5", "route": "38", "seg_no": 42, "part": 5, "of": 5, "roadtype": "現道"}, {"name": "路線38_No43_1", "route": "38", "seg_no": 43, "part": 1, "of": 2, "roadtype": "現道"}, {"name": "路線38_No43_2", "route": "38", "seg_no": 43, "part": 2, "of": 2, "roadtype": "現道"}, {"name": "路線44_No44_1", "route": "44", "seg_no": 44, "part": 1, "of": 12, "roadtype": "現道"}, {"name": "路線44_No44_2", "route": "44", "seg_no": 44, "part": 2, "of": 12, "roadtype": "現道"}, {"name": "路線44_No44_3", "route": "44", "seg_no": 44, "part": 3, "of": 12, "roadtype": "現道"}, {"name": "路線44_No44_4", "route": "44", "seg_no": 44, "part": 4, "of": 12, "roadtype": "現道"}, {"name": "路線44_No44_5", "route": "44", "seg_no": 44, "part": 5, "of": 12, "roadtype": "現道"}, {"name": "路線44_No44_6", "route": "44", "seg_no": 44, "part": 6, "of": 12, "roadtype": "現道"}, {"name": "路線44_No44_7", "route": "44", "seg_no": 44, "part": 7, "of": 12, "roadtype": "現道"}, {"name": "路線44_No44_8", "route": "44", "seg_no": 44, "part": 8, "of": 12, "roadtype": "現道"}, {"name": "路線44_No44_9", "route": "44", "seg_no": 44, "part": 9, "of": 12, "roadtype": "現道"}, {"name": "路線44_No44_10", "route": "44", "seg_no": 44, "part": 10, "of": 12, "roadtype": "現道"}, {"name": "路線44_No44_11", "route": "44", "seg_no": 44, "part": 11, "of": 12, "roadtype": "現道"}, {"name": "路線44_No44_12", "route": "44", "seg_no": 44, "part": 12, "of": 12, "roadtype": "現道"}, {"name": "路線44_No45_1", "route": "44", "seg_no": 45, "part": 1, "of": 1, "roadtype": "現道"}, {"name": "路線44_No46_1", "route": "44", "seg_no": 46, "part": 1, "of": 1, "roadtype": "現道"}];
+
+  function todayKey(){
+    const d = new Date();
+    return d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0");
+  }
+  function timeStr(d){
+    return String(d.getHours()).padStart(2,"0") + ":" + String(d.getMinutes()).padStart(2,"0") + ":" + String(d.getSeconds()).padStart(2,"0");
+  }
+
+  function loadDay(){
+    const key = "kushiro_log_" + todayKey();
+    try {
+      const raw = localStorage.getItem(key);
+      if (raw) return JSON.parse(raw);
+    } catch(e) { console.warn("storage read failed", e); }
+    return { attendance: [], work: [], gps: [] };
+  }
+  function listStoredDates(){
+    const dates = [];
+    try {
+      for (let i = 0; i < localStorage.length; i++){
+        const k = localStorage.key(i);
+        const m = k && k.match(/^kushiro_log_(\d{4}-\d{2}-\d{2})$/);
+        if (m) dates.push(m[1]);
+      }
+    } catch(e){ console.warn("storage list failed", e); }
+    dates.sort();
+    return dates;
+  }
+  function loadSpecificDay(dateKey){
+    try {
+      const raw = localStorage.getItem("kushiro_log_" + dateKey);
+      if (raw) return JSON.parse(raw);
+    } catch(e){ console.warn("storage read failed", e); }
+    return { attendance: [], work: [], gps: [] };
+  }
+  function saveDay(data){
+    const key = "kushiro_log_" + todayKey();
+    try { localStorage.setItem(key, JSON.stringify(data)); }
+    catch(e) { console.warn("storage save failed", e); }
+    if (typeof refreshHistorySelect === "function") refreshHistorySelect();
+    if (typeof refreshMonthSelect === "function") refreshMonthSelect();
+  }
+
+  let state = loadDay();
+
+  // ---------- Tabs ----------
+  document.querySelectorAll(".tab").forEach(function(tab){
+    tab.addEventListener("click", function(){
+      document.querySelectorAll(".tab").forEach(t=>t.classList.remove("active"));
+      tab.classList.add("active");
+      document.querySelectorAll("main > section").forEach(s=>s.style.display="none");
+      document.getElementById("tab-" + tab.dataset.tab).style.display = "";
+    });
+  });
+
+  // ---------- 勤怠 ----------
+  const btnClockIn = document.getElementById("btn-clockin");
+  const btnClockOut = document.getElementById("btn-clockout");
+  const attStatus = document.getElementById("attendance-status");
+  const attLog = document.getElementById("attendance-log");
+
+  // state.attendance: independent events, each its own row: { kind: "出勤"|"退勤", time: "HH:MM:SS" }
+  function renderAttendance(){
+    const last = state.attendance[state.attendance.length-1];
+    const clockedIn = last && last.kind === "出勤";
+    btnClockIn.disabled = !!clockedIn;
+    btnClockOut.disabled = !clockedIn;
+    attStatus.textContent = clockedIn
+      ? "出勤中（" + last.time + " 出勤）"
+      : (state.attendance.length ? "退勤済み" : "まだ出勤していません");
+
+    if (!state.attendance.length){
+      attLog.className = "empty"; attLog.textContent = "記録なし"; return;
+    }
+    attLog.className = "";
+    const attDate = todayKey();
+    let html = "<div class=\"date-label\">" + attDate + "</div>";
+    html += "<table><tr><th>種別</th><th>時刻</th><th></th></tr>";
+    state.attendance.forEach(function(r, idx){
+      html += "<tr><td>" + r.kind + "</td><td>" + r.time + "</td>"
+            + "<td><button class=\"del-btn\" data-act=\"del-row\" data-idx=\"" + idx + "\">削除</button></td></tr>";
+    });
+    html += "</table>";
+    attLog.innerHTML = html;
+  }
+
+  btnClockIn.addEventListener("click", function(){
+    state.attendance.push({ kind: "出勤", time: timeStr(new Date()) });
+    saveDay(state); renderAttendance();
+  });
+  btnClockOut.addEventListener("click", function(){
+    state.attendance.push({ kind: "退勤", time: timeStr(new Date()) });
+    saveDay(state); renderAttendance();
+  });
+  attLog.addEventListener("click", function(e){
+    const btn = e.target.closest("button[data-act]");
+    if (!btn || btn.dataset.act !== "del-row") return;
+    if (!confirm("この記録を削除しますか？")) return;
+    state.attendance.splice(Number(btn.dataset.idx), 1);
+    saveDay(state); renderAttendance();
+  });
+
+  // ---------- 作業ログ ----------
+  const segSelect = document.getElementById("segment-select");
+  SEGMENTS.forEach(function(s){
+    const opt = document.createElement("option");
+    opt.value = s.name;
+    opt.textContent = s.name + "（路線" + s.route + " " + s.roadtype + " " + s.part + "/" + s.of + "）";
+    segSelect.appendChild(opt);
+  });
+
+  const btnWorkStart = document.getElementById("btn-work-start");
+  const btnWorkStop = document.getElementById("btn-work-stop");
+  const workStatus = document.getElementById("work-status");
+  const workTimerEl = document.getElementById("work-timer");
+  const workLogEl = document.getElementById("work-log");
+  let workTimerInterval = null;
+
+  // state.work: independent events, each its own row: { segment, kind: "開始"|"終了", time }
+  function renderWork(){
+    const last = state.work[state.work.length-1];
+    const active = last && last.kind === "開始" ? last : null;
+    if (active){
+      segSelect.value = active.segment;
+      segSelect.disabled = true;
+      btnWorkStart.disabled = true;
+      btnWorkStop.disabled = false;
+      workStatus.textContent = active.segment + " を作業中（開始 " + active.time + "）";
+      workTimerEl.style.display = "";
+      if (!workTimerInterval){
+        const startDate = new Date();
+        const [h,m,s] = active.time.split(":").map(Number);
+        startDate.setHours(h,m,s,0);
+        workTimerInterval = setInterval(function(){
+          const diff = Math.max(0, Math.floor((new Date() - startDate)/1000));
+          const hh = String(Math.floor(diff/3600)).padStart(2,"0");
+          const mm = String(Math.floor((diff%3600)/60)).padStart(2,"0");
+          const ss = String(diff%60).padStart(2,"0");
+          workTimerEl.textContent = hh+":"+mm+":"+ss;
+        }, 1000);
+      }
+    } else {
+      segSelect.disabled = false;
+      btnWorkStart.disabled = false;
+      btnWorkStop.disabled = true;
+      workStatus.textContent = "未開始";
+      workTimerEl.style.display = "none";
+      if (workTimerInterval){ clearInterval(workTimerInterval); workTimerInterval = null; }
+    }
+
+    if (!state.work.length){
+      workLogEl.className = "empty"; workLogEl.textContent = "記録なし"; return;
+    }
+    workLogEl.className = "";
+    let html = "<table><tr><th>区間</th><th>種別</th><th>時刻</th><th></th></tr>";
+    const total = state.work.length;
+    state.work.slice().reverse().forEach(function(w, revIdx){
+      const origIdx = total - 1 - revIdx;
+      html += "<tr><td>" + w.segment + "</td><td>" + w.kind + "</td><td>" + w.time + "</td>"
+            + "<td><button class=\"del-btn\" data-act=\"del-row\" data-idx=\"" + origIdx + "\">削除</button></td></tr>";
+    });
+    html += "</table>";
+    workLogEl.innerHTML = html;
+  }
+
+  workLogEl.addEventListener("click", function(e){
+    const btn = e.target.closest("button[data-act]");
+    if (!btn || btn.dataset.act !== "del-row") return;
+    if (!confirm("この記録を削除しますか？")) return;
+    state.work.splice(Number(btn.dataset.idx), 1);
+    saveDay(state); renderWork();
+  });
+
+  btnWorkStart.addEventListener("click", function(){
+    state.work.push({ segment: segSelect.value, kind: "開始", time: timeStr(new Date()) });
+    saveDay(state); renderWork();
+  });
+  btnWorkStop.addEventListener("click", function(){
+    const last = state.work[state.work.length-1];
+    const segment = (last && last.kind === "開始") ? last.segment : segSelect.value;
+    state.work.push({ segment: segment, kind: "終了", time: timeStr(new Date()) });
+    saveDay(state); renderWork();
+  });
+
+  // ---------- GPS ----------
+  const btnGpsStart = document.getElementById("btn-gps-start");
+  const btnGpsStop = document.getElementById("btn-gps-stop");
+  const gpsDot = document.getElementById("gps-dot");
+  const gpsStatusEl = document.getElementById("gps-status");
+  const gpsPointsEl = document.getElementById("gps-points");
+  let watchId = null;
+
+  function renderGps(){
+    gpsPointsEl.textContent = "記録ポイント数: " + state.gps.length;
+  }
+
+  btnGpsStart.addEventListener("click", function(){
+    if (!navigator.geolocation){
+      gpsStatusEl.textContent = "この端末では位置情報が利用できません";
+      return;
+    }
+    watchId = navigator.geolocation.watchPosition(function(pos){
+      state.gps.push({
+        lat: pos.coords.latitude,
+        lon: pos.coords.longitude,
+        t: timeStr(new Date())
+      });
+      saveDay(state);
+      renderGps();
+    }, function(err){
+      gpsStatusEl.textContent = "位置情報エラー: " + err.message;
+    }, { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 });
+
+    gpsDot.classList.add("on");
+    gpsStatusEl.textContent = "記録中";
+    btnGpsStart.disabled = true;
+    btnGpsStop.disabled = false;
+  });
+
+  btnGpsStop.addEventListener("click", function(){
+    if (watchId !== null && navigator.geolocation){
+      navigator.geolocation.clearWatch(watchId);
+      watchId = null;
+    }
+    gpsDot.classList.remove("on");
+    gpsStatusEl.textContent = "停止中";
+    btnGpsStart.disabled = false;
+    btnGpsStop.disabled = true;
+  });
+
+  // ---------- 過去の履歴 ----------
+  const historySelect = document.getElementById("history-date-select");
+  const historyResultEl = document.getElementById("history-view-result");
+
+  function refreshHistorySelect(){
+    const dates = listStoredDates();
+    historySelect.innerHTML = "";
+    dates.slice().reverse().forEach(function(d){
+      const opt = document.createElement("option");
+      opt.value = d;
+      opt.textContent = d + (d === todayKey() ? "（本日）" : "");
+      historySelect.appendChild(opt);
+    });
+  }
+  refreshHistorySelect();
+
+  document.getElementById("btn-history-view").addEventListener("click", function(){
+    const d = historySelect.value;
+    if (!d){ historyResultEl.innerHTML = "<div class=\"empty\">記録がありません</div>"; return; }
+    const day = loadSpecificDay(d);
+    let html = "<div class=\"date-label\">" + d + "</div>";
+    html += "<table><tr><th>種別</th><th>時刻</th></tr>";
+    if (day.attendance.length){
+      day.attendance.forEach(function(a){ html += "<tr><td>" + a.kind + "</td><td>" + a.time + "</td></tr>"; });
+    } else {
+      html += "<tr><td colspan=\"2\">記録なし</td></tr>";
+    }
+    html += "</table>";
+    html += "<table style=\"margin-top:10px\"><tr><th>区間</th><th>種別</th><th>時刻</th></tr>";
+    if (day.work.length){
+      day.work.forEach(function(w){ html += "<tr><td>" + w.segment + "</td><td>" + w.kind + "</td><td>" + w.time + "</td></tr>"; });
+    } else {
+      html += "<tr><td colspan=\"3\">記録なし</td></tr>";
+    }
+    html += "</table>";
+    historyResultEl.innerHTML = html;
+  });
+
+  function buildMonthCsv(monthKey){
+    // monthKey is "YYYY-MM"
+    const dates = listStoredDates().filter(function(d){ return d.slice(0,7) === monthKey; });
+    let csv = "【勤怠　" + monthKey + "】\n";
+    csv += "date,種別,時刻\n";
+    dates.forEach(function(d){
+      const day = loadSpecificDay(d);
+      day.attendance.forEach(function(a){
+        csv += d + "," + a.kind + "," + a.time + "\n";
+      });
+    });
+    csv += "\n【作業ログ　" + monthKey + "】\n";
+    csv += "date,区間,種別,時刻\n";
+    dates.forEach(function(d){
+      const day = loadSpecificDay(d);
+      day.work.forEach(function(w){
+        csv += d + "," + w.segment + "," + w.kind + "," + w.time + "\n";
+      });
+    });
+    return csv;
+  }
+
+  const monthSelect = document.getElementById("history-month-select");
+  function refreshMonthSelect(){
+    const dates = listStoredDates();
+    const months = [];
+    dates.forEach(function(d){
+      const m = d.slice(0,7);
+      if (months.indexOf(m) === -1) months.push(m);
+    });
+    const prevValue = monthSelect.value;
+    monthSelect.innerHTML = "";
+    months.slice().reverse().forEach(function(m){
+      const opt = document.createElement("option");
+      opt.value = m;
+      opt.textContent = m;
+      monthSelect.appendChild(opt);
+    });
+    if (months.indexOf(prevValue) !== -1) monthSelect.value = prevValue;
+  }
+  refreshMonthSelect();
+
+  function buildDayKml(dateKey, gpsPoints){
+    const coordsStr = gpsPoints.map(function(p){ return p.lon + "," + p.lat + ",0"; }).join(" ");
+    return '<?xml version="1.0" encoding="UTF-8"?>\n' +
+      '<kml xmlns="http://www.opengis.net/kml/2.2"><Document>' +
+      '<name>釧路現場 軌跡 ' + dateKey + '</name>' +
+      '<Placemark><name>GPS軌跡 ' + dateKey + '</name>' +
+      '<Style><LineStyle><color>ff0000ff</color><width>4</width></LineStyle></Style>' +
+      '<LineString><coordinates>' + coordsStr + '</coordinates></LineString>' +
+      '</Placemark></Document></kml>';
+  }
+
+  document.getElementById("btn-history-drive-month").addEventListener("click", function(){
+    const monthKey = monthSelect.value;
+    if (!monthKey){ setDriveStatus("記録がありません", "all"); return; }
+    const csv = buildMonthCsv(monthKey);
+    const jobs = [{
+      filename: "kushiro_log_" + monthKey + ".csv",
+      content: "\ufeff" + csv,
+      mime: "text/csv"
+    }];
+    const dates = listStoredDates().filter(function(d){ return d.slice(0,7) === monthKey; });
+    dates.forEach(function(d){
+      const day = loadSpecificDay(d);
+      if (day.gps && day.gps.length){
+        const dateNoDash = d.replace(/-/g, "");
+        jobs.push({
+          filename: "kushiro work tracker " + dateNoDash + ".kml",
+          content: buildDayKml(d, day.gps),
+          mime: "application/vnd.google-earth.kml+xml"
+        });
+      }
+    });
+    driveUploadBatch(jobs, "all");
+  });
+
+  // ---------- Googleドライブ連携 ----------
+  const DRIVE_CLIENT_ID = "6787185038-skuu8gj9kvn316feseqgrgsdi0iaa2fd.apps.googleusercontent.com";
+  const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file";
+  const driveStatusEl = document.getElementById("drive-status");
+  const driveStatusAllEl = document.getElementById("drive-status-all");
+  let accessToken = null;
+  let tokenClient = null;
+  let pendingUpload = null;
+  let cachedFolderId = null;
+  let lastStatusTarget = null;
+
+  function setDriveStatus(msg, target){
+    const el = target === "all" ? driveStatusAllEl : driveStatusEl;
+    if (el) el.textContent = msg;
+  }
+
+  function initTokenClientIfNeeded(){
+    if (tokenClient || !window.google || !google.accounts || !google.accounts.oauth2) return;
+    tokenClient = google.accounts.oauth2.initTokenClient({
+      client_id: DRIVE_CLIENT_ID,
+      scope: DRIVE_SCOPE,
+      callback: async function(resp){
+        if (resp.error){
+          setDriveStatus("ログイン/許可が必要です: " + resp.error, lastStatusTarget);
+          return;
+        }
+        accessToken = resp.access_token;
+        if (pendingUpload){
+          const jobs = pendingUpload.jobs; const target = pendingUpload.target;
+          pendingUpload = null;
+          for (let i = 0; i < jobs.length; i++){
+            setDriveStatus("アップロード中... (" + (i+1) + "/" + jobs.length + ") " + jobs[i].filename, target);
+            await doUpload(jobs[i].filename, jobs[i].content, jobs[i].mime, target);
+          }
+          if (jobs.length > 1) setDriveStatus(jobs.length + "件のファイルを保存しました", target);
+        }
+      }
+    });
+  }
+
+  async function getOrCreateFolder(){
+    if (cachedFolderId) return cachedFolderId;
+    const q = encodeURIComponent("name='kushiro-tracker' and mimeType='application/vnd.google-apps.folder' and trashed=false");
+    const listRes = await fetch("https://www.googleapis.com/drive/v3/files?q=" + q + "&fields=files(id,name)", {
+      headers: { Authorization: "Bearer " + accessToken }
+    });
+    const listData = await listRes.json();
+    if (listData.files && listData.files.length){
+      cachedFolderId = listData.files[0].id;
+      return cachedFolderId;
+    }
+    const createRes = await fetch("https://www.googleapis.com/drive/v3/files", {
+      method: "POST",
+      headers: { Authorization: "Bearer " + accessToken, "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "kushiro-tracker", mimeType: "application/vnd.google-apps.folder" })
+    });
+    const createData = await createRes.json();
+    cachedFolderId = createData.id;
+    return cachedFolderId;
+  }
+
+  async function doUpload(filename, content, mime, target){
+    setDriveStatus("アップロード中...", target);
+    try {
+      const folderId = await getOrCreateFolder();
+      const metadata = { name: filename, parents: [folderId] };
+      const boundary = "-------kushiro" + Date.now();
+      const body =
+        "--" + boundary + "\r\n" +
+        "Content-Type: application/json; charset=UTF-8\r\n\r\n" +
+        JSON.stringify(metadata) + "\r\n" +
+        "--" + boundary + "\r\n" +
+        "Content-Type: " + mime + "\r\n\r\n" +
+        content + "\r\n" +
+        "--" + boundary + "--";
+
+      const res = await fetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink", {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer " + accessToken,
+          "Content-Type": "multipart/related; boundary=" + boundary
+        },
+        body: body
+      });
+      if (!res.ok){
+        const errText = await res.text();
+        setDriveStatus("保存に失敗しました: " + res.status, target);
+        console.error(errText);
+        return;
+      }
+      const data = await res.json();
+      setDriveStatus("保存しました: " + data.name, target);
+    } catch(e){
+      setDriveStatus("エラー: " + e.message, target);
+      console.error(e);
+    }
+  }
+
+  function driveUploadBatch(jobs, target){
+    initTokenClientIfNeeded();
+    lastStatusTarget = target;
+    if (!tokenClient){
+      setDriveStatus("Googleログイン機能の読み込み中です。数秒後にもう一度お試しください。", target);
+      return;
+    }
+    pendingUpload = { jobs: jobs, target: target };
+    tokenClient.requestAccessToken({ prompt: accessToken ? "" : "consent" });
+  }
+
+  function driveUpload(filename, content, mime){
+    driveUploadBatch([{ filename: filename, content: content, mime: mime }], "single");
+  }
+
+  document.getElementById("btn-drive-kml").addEventListener("click", function(){
+    const d = todayKey();
+    const dateNoDash = d.replace(/-/g, "");
+    const kml = buildDayKml(d, state.gps);
+    driveUpload("kushiro work tracker " + dateNoDash + ".kml", kml, "application/vnd.google-earth.kml+xml");
+  });
+
+  // init
+  renderAttendance();
+  renderWork();
+  renderGps();
+})();
+
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', function(){
+    navigator.serviceWorker.register('sw.js').catch(function(e){
+      console.warn('service worker registration failed', e);
+    });
+  });
+}
+</script>
+</body>
+</html>
