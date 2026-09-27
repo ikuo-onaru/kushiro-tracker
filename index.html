@@ -59,6 +59,8 @@
 
   .drivebtn { background:#1a73e8; }
   .del-btn { flex:none; min-width:0; padding:4px 10px; font-size:11px; background:var(--danger); border-radius:6px; }
+  .mini-x { flex:none; min-width:0; padding:0 5px; font-size:11px; line-height:16px; background:var(--sub); color:#fff; border-radius:50%; margin-left:4px; }
+  .date-label { font-size:13px; font-weight:600; color:var(--text); margin-bottom:6px; }
   table td:last-child, table th:last-child { text-align:right; }
   .drivebtn:disabled { opacity:0.5; }
   .drive-status { font-size:12px; color:var(--sub); margin-top:6px; min-height:16px; }
@@ -126,27 +128,29 @@
   <!-- 履歴/出力タブ -->
   <section id="tab-history" style="display:none">
     <div class="card">
-      <h2>データの出力</h2>
+      <h2>過去の履歴を見る</h2>
+      <select id="history-date-select"></select>
       <div class="row">
-        <button class="secondary" id="btn-export-csv">作業ログをCSVで保存</button>
+        <button class="secondary" id="btn-history-view">この日を表示</button>
       </div>
-      <div class="row">
-        <button class="secondary" id="btn-export-kml">GPS軌跡をKMLで保存（Google Earth用）</button>
-      </div>
-      <div class="row">
-        <button class="ghost" id="btn-clear">本日のデータを消去</button>
-      </div>
+      <div id="history-view-result"></div>
     </div>
     <div class="card">
-      <h2>Googleドライブに保存</h2>
+      <h2>月を選んでドライブに保存（月報用）</h2>
+      <select id="history-month-select"></select>
       <div class="row">
-        <button class="drivebtn" id="btn-drive-csv">作業ログをドライブに保存</button>
+        <button class="drivebtn" id="btn-history-drive-month">選択した月をドライブに保存</button>
       </div>
+      <div class="drive-status" id="drive-status-all"></div>
+      <div class="footer-note">選択した月（1日〜末日）に記録されているデータをすべて1つのファイルにまとめてドライブに保存します。月末の集計にお使いください。</div>
+    </div>
+    <div class="card">
+      <h2>GPS軌跡（本日分）</h2>
       <div class="row">
         <button class="drivebtn" id="btn-drive-kml">GPS軌跡をドライブに保存</button>
       </div>
       <div class="drive-status" id="drive-status"></div>
-      <div class="footer-note">初回はGoogleアカウントへのログインとアクセス許可が必要です。保存先はGoogleドライブ内に自動作成される「kushiro-tracker」フォルダです。</div>
+      <div class="footer-note">初回はGoogleアカウントへのログインとアクセス許可が必要です。保存先はGoogleドライブ内に自動作成される「kushiro-tracker」フォルダです。ドライブ内のKMLファイルはGoogle Earthアプリからそのまま開けます。</div>
       <div class="footer-note">データはこの端末（ブラウザ）内にのみ保存されます。日付が変わると自動的に新しい記録になります。</div>
     </div>
   </section>
@@ -175,10 +179,31 @@
     } catch(e) { console.warn("storage read failed", e); }
     return { attendance: [], work: [], gps: [] };
   }
+  function listStoredDates(){
+    const dates = [];
+    try {
+      for (let i = 0; i < localStorage.length; i++){
+        const k = localStorage.key(i);
+        const m = k && k.match(/^kushiro_log_(\d{4}-\d{2}-\d{2})$/);
+        if (m) dates.push(m[1]);
+      }
+    } catch(e){ console.warn("storage list failed", e); }
+    dates.sort();
+    return dates;
+  }
+  function loadSpecificDay(dateKey){
+    try {
+      const raw = localStorage.getItem("kushiro_log_" + dateKey);
+      if (raw) return JSON.parse(raw);
+    } catch(e){ console.warn("storage read failed", e); }
+    return { attendance: [], work: [], gps: [] };
+  }
   function saveDay(data){
     const key = "kushiro_log_" + todayKey();
     try { localStorage.setItem(key, JSON.stringify(data)); }
     catch(e) { console.warn("storage save failed", e); }
+    if (typeof refreshHistorySelect === "function") refreshHistorySelect();
+    if (typeof refreshMonthSelect === "function") refreshMonthSelect();
   }
 
   let state = loadDay();
@@ -199,7 +224,7 @@
   const attStatus = document.getElementById("attendance-status");
   const attLog = document.getElementById("attendance-log");
 
-  // state.attendance is a flat list of independent events: { kind: "出勤"|"退勤", time: "HH:MM:SS" }
+  // state.attendance: independent events, each its own row: { kind: "出勤"|"退勤", time: "HH:MM:SS" }
   function renderAttendance(){
     const last = state.attendance[state.attendance.length-1];
     const clockedIn = last && last.kind === "出勤";
@@ -213,10 +238,12 @@
       attLog.className = "empty"; attLog.textContent = "記録なし"; return;
     }
     attLog.className = "";
-    let html = "<table><tr><th>種別</th><th>時刻</th><th></th></tr>";
+    const attDate = todayKey();
+    let html = "<div class=\"date-label\">" + attDate + "</div>";
+    html += "<table><tr><th>種別</th><th>時刻</th><th></th></tr>";
     state.attendance.forEach(function(r, idx){
       html += "<tr><td>" + r.kind + "</td><td>" + r.time + "</td>"
-            + "<td><button class=\"del-btn\" data-kind=\"att\" data-idx=\"" + idx + "\">削除</button></td></tr>";
+            + "<td><button class=\"del-btn\" data-act=\"del-row\" data-idx=\"" + idx + "\">削除</button></td></tr>";
     });
     html += "</table>";
     attLog.innerHTML = html;
@@ -231,9 +258,9 @@
     saveDay(state); renderAttendance();
   });
   attLog.addEventListener("click", function(e){
-    const btn = e.target.closest(".del-btn");
-    if (!btn || btn.dataset.kind !== "att") return;
-    if (!confirm("この勤怠記録を削除しますか？")) return;
+    const btn = e.target.closest("button[data-act]");
+    if (!btn || btn.dataset.act !== "del-row") return;
+    if (!confirm("この記録を削除しますか？")) return;
     state.attendance.splice(Number(btn.dataset.idx), 1);
     saveDay(state); renderAttendance();
   });
@@ -254,7 +281,7 @@
   const workLogEl = document.getElementById("work-log");
   let workTimerInterval = null;
 
-  // state.work is a flat list of independent events: { segment, kind: "開始"|"終了", time }
+  // state.work: independent events, each its own row: { segment, kind: "開始"|"終了", time }
   function renderWork(){
     const last = state.work[state.work.length-1];
     const active = last && last.kind === "開始" ? last : null;
@@ -295,16 +322,16 @@
     state.work.slice().reverse().forEach(function(w, revIdx){
       const origIdx = total - 1 - revIdx;
       html += "<tr><td>" + w.segment + "</td><td>" + w.kind + "</td><td>" + w.time + "</td>"
-            + "<td><button class=\"del-btn\" data-kind=\"work\" data-idx=\"" + origIdx + "\">削除</button></td></tr>";
+            + "<td><button class=\"del-btn\" data-act=\"del-row\" data-idx=\"" + origIdx + "\">削除</button></td></tr>";
     });
     html += "</table>";
     workLogEl.innerHTML = html;
   }
 
   workLogEl.addEventListener("click", function(e){
-    const btn = e.target.closest(".del-btn");
-    if (!btn || btn.dataset.kind !== "work") return;
-    if (!confirm("この作業ログを削除しますか？")) return;
+    const btn = e.target.closest("button[data-act]");
+    if (!btn || btn.dataset.act !== "del-row") return;
+    if (!confirm("この記録を削除しますか？")) return;
     state.work.splice(Number(btn.dataset.idx), 1);
     saveDay(state); renderWork();
   });
@@ -366,79 +393,136 @@
     btnGpsStop.disabled = true;
   });
 
-  // ---------- 出力 ----------
-  let downloadsCap = null;
-  if (window.claude && window.claude.use){
-    window.claude.use("downloads").then(function(d){ downloadsCap = d; }).catch(function(){ downloadsCap = null; });
-  }
+  // ---------- 過去の履歴 ----------
+  const historySelect = document.getElementById("history-date-select");
+  const historyResultEl = document.getElementById("history-view-result");
 
-  async function saveFile(filename, text, mime){
-    if (downloadsCap){
-      try {
-        await downloadsCap.save({ filename: filename, data: text });
-        return;
-      } catch(e){ console.warn("downloads capability failed, falling back", e); }
+  function refreshHistorySelect(){
+    const dates = listStoredDates();
+    historySelect.innerHTML = "";
+    dates.slice().reverse().forEach(function(d){
+      const opt = document.createElement("option");
+      opt.value = d;
+      opt.textContent = d + (d === todayKey() ? "（本日）" : "");
+      historySelect.appendChild(opt);
+    });
+  }
+  refreshHistorySelect();
+
+  document.getElementById("btn-history-view").addEventListener("click", function(){
+    const d = historySelect.value;
+    if (!d){ historyResultEl.innerHTML = "<div class=\"empty\">記録がありません</div>"; return; }
+    const day = loadSpecificDay(d);
+    let html = "<div class=\"date-label\">" + d + "</div>";
+    html += "<table><tr><th>種別</th><th>時刻</th></tr>";
+    if (day.attendance.length){
+      day.attendance.forEach(function(a){ html += "<tr><td>" + a.kind + "</td><td>" + a.time + "</td></tr>"; });
+    } else {
+      html += "<tr><td colspan=\"2\">記録なし</td></tr>";
     }
-    // fallback: plain anchor download (works when opened as a normal local/browser page)
-    const blob = new Blob([text], { type: mime || "text/plain" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url; a.download = filename;
-    document.body.appendChild(a); a.click(); document.body.removeChild(a);
-    setTimeout(function(){ URL.revokeObjectURL(url); }, 2000);
-  }
-
-  function buildCsv(){
-    const d = todayKey();
-    let csv = "【勤怠】\n";
-    csv += "date,種別,時刻\n";
-    state.attendance.forEach(function(a){
-      csv += d + "," + a.kind + "," + a.time + "\n";
-    });
-    csv += "\n";
-    csv += "【作業ログ】\n";
-    csv += "date,区間,種別,時刻\n";
-    state.work.forEach(function(w){
-      csv += d + "," + w.segment + "," + w.kind + "," + w.time + "\n";
-    });
-    return { d: d, csv: csv };
-  }
-
-  document.getElementById("btn-export-csv").addEventListener("click", function(){
-    const built = buildCsv();
-    saveFile("kushiro_log_" + built.d + ".csv", "\ufeff" + built.csv, "text/csv");
+    html += "</table>";
+    html += "<table style=\"margin-top:10px\"><tr><th>区間</th><th>種別</th><th>時刻</th></tr>";
+    if (day.work.length){
+      day.work.forEach(function(w){ html += "<tr><td>" + w.segment + "</td><td>" + w.kind + "</td><td>" + w.time + "</td></tr>"; });
+    } else {
+      html += "<tr><td colspan=\"3\">記録なし</td></tr>";
+    }
+    html += "</table>";
+    historyResultEl.innerHTML = html;
   });
 
-  document.getElementById("btn-export-kml").addEventListener("click", function(){
-    const d = todayKey();
-    const coordsStr = state.gps.map(function(p){ return p.lon + "," + p.lat + ",0"; }).join(" ");
-    const kml = '<?xml version="1.0" encoding="UTF-8"?>\n' +
+  function buildMonthCsv(monthKey){
+    // monthKey is "YYYY-MM"
+    const dates = listStoredDates().filter(function(d){ return d.slice(0,7) === monthKey; });
+    let csv = "【勤怠　" + monthKey + "】\n";
+    csv += "date,種別,時刻\n";
+    dates.forEach(function(d){
+      const day = loadSpecificDay(d);
+      day.attendance.forEach(function(a){
+        csv += d + "," + a.kind + "," + a.time + "\n";
+      });
+    });
+    csv += "\n【作業ログ　" + monthKey + "】\n";
+    csv += "date,区間,種別,時刻\n";
+    dates.forEach(function(d){
+      const day = loadSpecificDay(d);
+      day.work.forEach(function(w){
+        csv += d + "," + w.segment + "," + w.kind + "," + w.time + "\n";
+      });
+    });
+    return csv;
+  }
+
+  const monthSelect = document.getElementById("history-month-select");
+  function refreshMonthSelect(){
+    const dates = listStoredDates();
+    const months = [];
+    dates.forEach(function(d){
+      const m = d.slice(0,7);
+      if (months.indexOf(m) === -1) months.push(m);
+    });
+    const prevValue = monthSelect.value;
+    monthSelect.innerHTML = "";
+    months.slice().reverse().forEach(function(m){
+      const opt = document.createElement("option");
+      opt.value = m;
+      opt.textContent = m;
+      monthSelect.appendChild(opt);
+    });
+    if (months.indexOf(prevValue) !== -1) monthSelect.value = prevValue;
+  }
+  refreshMonthSelect();
+
+  function buildDayKml(dateKey, gpsPoints){
+    const coordsStr = gpsPoints.map(function(p){ return p.lon + "," + p.lat + ",0"; }).join(" ");
+    return '<?xml version="1.0" encoding="UTF-8"?>\n' +
       '<kml xmlns="http://www.opengis.net/kml/2.2"><Document>' +
-      '<name>釧路現場 軌跡 ' + d + '</name>' +
-      '<Placemark><name>GPS軌跡 ' + d + '</name>' +
+      '<name>釧路現場 軌跡 ' + dateKey + '</name>' +
+      '<Placemark><name>GPS軌跡 ' + dateKey + '</name>' +
       '<Style><LineStyle><color>ff0000ff</color><width>4</width></LineStyle></Style>' +
       '<LineString><coordinates>' + coordsStr + '</coordinates></LineString>' +
       '</Placemark></Document></kml>';
-    saveFile("kushiro_gps_" + d + ".kml", kml, "application/vnd.google-earth.kml+xml");
-  });
+  }
 
-  document.getElementById("btn-clear").addEventListener("click", function(){
-    if (!confirm("本日の記録をすべて消去しますか？")) return;
-    state = { attendance: [], work: [], gps: [] };
-    saveDay(state);
-    renderAttendance(); renderWork(); renderGps();
+  document.getElementById("btn-history-drive-month").addEventListener("click", function(){
+    const monthKey = monthSelect.value;
+    if (!monthKey){ setDriveStatus("記録がありません", "all"); return; }
+    const csv = buildMonthCsv(monthKey);
+    const jobs = [{
+      filename: "kushiro_log_" + monthKey + ".csv",
+      content: "\ufeff" + csv,
+      mime: "text/csv"
+    }];
+    const dates = listStoredDates().filter(function(d){ return d.slice(0,7) === monthKey; });
+    dates.forEach(function(d){
+      const day = loadSpecificDay(d);
+      if (day.gps && day.gps.length){
+        const dateNoDash = d.replace(/-/g, "");
+        jobs.push({
+          filename: "kushiro work tracker " + dateNoDash + ".kml",
+          content: buildDayKml(d, day.gps),
+          mime: "application/vnd.google-earth.kml+xml"
+        });
+      }
+    });
+    driveUploadBatch(jobs, "all");
   });
 
   // ---------- Googleドライブ連携 ----------
   const DRIVE_CLIENT_ID = "6787185038-skuu8gj9kvn316feseqgrgsdi0iaa2fd.apps.googleusercontent.com";
   const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file";
   const driveStatusEl = document.getElementById("drive-status");
+  const driveStatusAllEl = document.getElementById("drive-status-all");
   let accessToken = null;
   let tokenClient = null;
   let pendingUpload = null;
   let cachedFolderId = null;
+  let lastStatusTarget = null;
 
-  function setDriveStatus(msg){ if (driveStatusEl) driveStatusEl.textContent = msg; }
+  function setDriveStatus(msg, target){
+    const el = target === "all" ? driveStatusAllEl : driveStatusEl;
+    if (el) el.textContent = msg;
+  }
 
   function initTokenClientIfNeeded(){
     if (tokenClient || !window.google || !google.accounts || !google.accounts.oauth2) return;
@@ -447,13 +531,18 @@
       scope: DRIVE_SCOPE,
       callback: async function(resp){
         if (resp.error){
-          setDriveStatus("ログイン/許可が必要です: " + resp.error);
+          setDriveStatus("ログイン/許可が必要です: " + resp.error, lastStatusTarget);
           return;
         }
         accessToken = resp.access_token;
         if (pendingUpload){
-          const job = pendingUpload; pendingUpload = null;
-          await doUpload(job.filename, job.content, job.mime);
+          const jobs = pendingUpload.jobs; const target = pendingUpload.target;
+          pendingUpload = null;
+          for (let i = 0; i < jobs.length; i++){
+            setDriveStatus("アップロード中... (" + (i+1) + "/" + jobs.length + ") " + jobs[i].filename, target);
+            await doUpload(jobs[i].filename, jobs[i].content, jobs[i].mime, target);
+          }
+          if (jobs.length > 1) setDriveStatus(jobs.length + "件のファイルを保存しました", target);
         }
       }
     });
@@ -480,8 +569,8 @@
     return cachedFolderId;
   }
 
-  async function doUpload(filename, content, mime){
-    setDriveStatus("アップロード中...");
+  async function doUpload(filename, content, mime, target){
+    setDriveStatus("アップロード中...", target);
     try {
       const folderId = await getOrCreateFolder();
       const metadata = { name: filename, parents: [folderId] };
@@ -505,44 +594,38 @@
       });
       if (!res.ok){
         const errText = await res.text();
-        setDriveStatus("保存に失敗しました: " + res.status);
+        setDriveStatus("保存に失敗しました: " + res.status, target);
         console.error(errText);
         return;
       }
       const data = await res.json();
-      setDriveStatus("保存しました: " + data.name);
+      setDriveStatus("保存しました: " + data.name, target);
     } catch(e){
-      setDriveStatus("エラー: " + e.message);
+      setDriveStatus("エラー: " + e.message, target);
       console.error(e);
     }
   }
 
-  function driveUpload(filename, content, mime){
+  function driveUploadBatch(jobs, target){
     initTokenClientIfNeeded();
+    lastStatusTarget = target;
     if (!tokenClient){
-      setDriveStatus("Googleログイン機能の読み込み中です。数秒後にもう一度お試しください。");
+      setDriveStatus("Googleログイン機能の読み込み中です。数秒後にもう一度お試しください。", target);
       return;
     }
-    pendingUpload = { filename: filename, content: content, mime: mime };
+    pendingUpload = { jobs: jobs, target: target };
     tokenClient.requestAccessToken({ prompt: accessToken ? "" : "consent" });
   }
 
-  document.getElementById("btn-drive-csv").addEventListener("click", function(){
-    const built = buildCsv();
-    driveUpload("kushiro_log_" + built.d + ".csv", "\ufeff" + built.csv, "text/csv");
-  });
+  function driveUpload(filename, content, mime){
+    driveUploadBatch([{ filename: filename, content: content, mime: mime }], "single");
+  }
 
   document.getElementById("btn-drive-kml").addEventListener("click", function(){
     const d = todayKey();
-    const coordsStr = state.gps.map(function(p){ return p.lon + "," + p.lat + ",0"; }).join(" ");
-    const kml = '<?xml version="1.0" encoding="UTF-8"?>\n' +
-      '<kml xmlns="http://www.opengis.net/kml/2.2"><Document>' +
-      '<name>釧路現場 軌跡 ' + d + '</name>' +
-      '<Placemark><name>GPS軌跡 ' + d + '</name>' +
-      '<Style><LineStyle><color>ff0000ff</color><width>4</width></LineStyle></Style>' +
-      '<LineString><coordinates>' + coordsStr + '</coordinates></LineString>' +
-      '</Placemark></Document></kml>';
-    driveUpload("kushiro_gps_" + d + ".kml", kml, "application/vnd.google-earth.kml+xml");
+    const dateNoDash = d.replace(/-/g, "");
+    const kml = buildDayKml(d, state.gps);
+    driveUpload("kushiro work tracker " + dateNoDash + ".kml", kml, "application/vnd.google-earth.kml+xml");
   });
 
   // init
